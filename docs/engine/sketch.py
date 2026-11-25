@@ -5,6 +5,8 @@ All sizes are millimetres at OUTPUT size; the raster runs at about 8 px/mm. Ever
 gap is held at 1.0 mm or more (clay floor, skill R19/R21) by an open/close pass at the end.
 """
 from __future__ import annotations
+import copy
+import hashlib
 import io
 import math
 import time
@@ -613,11 +615,11 @@ def _hair_cuts(hm, xc, bx, bw, ppm, rng, h, w, L06):
 
 
 # ------------------------------------------------------------------ the sketch
-def make_sketch(upload: bytes, tile_width_mm: float, detail: float = 0.5, shading: bool = True,
-                debug: bool = False, measure: bool = True, gap_mm: float = 1.0) -> Sketch:
+def _sketch_base(upload: bytes, tile_width_mm: float, shading: bool, debug: bool, measure: bool,
+                 gap_mm: float) -> dict:
+    """Everything the detail slider does not change. Cached per photo and size by make_sketch."""
     t0 = time.time()
     rng = np.random.default_rng(11)
-    detail = float(min(1.0, max(0.0, detail)))
     img = _open_image(upload)
     geo = geometry(img)
     W = max(20.0, float(tile_width_mm))
@@ -1506,6 +1508,57 @@ def make_sketch(upload: bytes, tile_width_mm: float, detail: float = 0.5, shadin
             max(inside, key=lambda l: l["g"] * l["len"])["role"] = "ear"
     mb = (bx + 0.25 * bw, by + 0.68 * bh, bx + 0.75 * bw, by + 0.85 * bh)
     mouths = [l for l in lines if in_box(l["c"], mb) and horiz(l, 25) and l["len"] >= 0.12 * fwmm and l.get("role") is None]
+    return {k: v for k, v in locals().items() if k in _BASE_NEEDS}
+
+
+_BASE_CACHE: dict = {}
+_BASE_NEEDS = frozenset(['Hmm', 'L', 'Vg', 'W', 'beard_only', 'beard_reg', 'best_', 'bh', 'black', 'bw', 'bx', 'by', 'ca_', 'catch', 'cb_', 'ch_', 'cheek_mid', 'chin_ln', 'clear_core', 'coi', 'core', 'cur', 'dark_hair', 'debug', 'dy', 'ex_', 'extra_black', 'ey_', 'eye_cx', 'eye_info', 'eye_rows', 'face_box', 'face_med', 'fd', 'fdraw', 'flow_ink', 'gap_mm', 'geo', 'h', 'hair_black', 'hatch', 'head_area', 'horiz', 'in_box', 'ix', 'ix_', 'iy', 'iy_', 'k_', 'keep', 'l', 'layers', 'lb_', 'light_left', 'light_side', 'lines', 'ln_', 'lvl', 'mask', 'measure', 'mous', 'mous_hatch', 'mous_solid', 'mous_sym', 'mous_white', 'mouth_m', 'mouth_rows', 'nose_tip', 'nostril_pts', 'ok_', 'okc', 'okv', 'p', 'ppm', 'pth', 'pts', 'q', 'r_', 'redo', 'rgb', 'ribbon', 'rng', 'sd', 'sg', 'sgn', 'sl', 'sm', 'solid_mass', 'strands_white', 'stv', 't', 'teeth_only', 'w', 'wd', 'xc', 'xs', 'ys_', 'zone'])
+
+
+def _copy_state(v):
+    if isinstance(v, np.ndarray):
+        return v.copy()
+    if isinstance(v, Image.Image):
+        return v.copy()
+    if isinstance(v, ImageDraw.ImageDraw):
+        return None               # rebuilt on the copied canvas
+    if callable(v) or isinstance(v, type(np)):
+        return v                  # helper functions and modules
+    return copy.deepcopy(v)       # lists, dicts, and the random generator's state
+
+
+def make_sketch(upload: bytes, tile_width_mm: float, detail: float = 0.5, shading: bool = True,
+                debug: bool = False, measure: bool = True, gap_mm: float = 1.0) -> Sketch:
+    t0 = time.time()
+    detail = float(min(1.0, max(0.0, detail)))
+    # The face analysis does not depend on detail; moving the slider only re-runs the line
+    # selection and compositing below. One entry: the last photo at the last size.
+    key = (hashlib.sha1(upload).hexdigest(), float(tile_width_mm), bool(shading), bool(debug), bool(measure),
+           round(float(gap_mm), 4))
+    base = _BASE_CACHE.get(key)
+    if base is None:
+        base = _sketch_base(upload, tile_width_mm, shading, debug, measure, gap_mm)
+        _BASE_CACHE.clear()
+        _BASE_CACHE[key] = base
+    S = {k: _copy_state(v) for k, v in base.items()}
+    Hmm, L, Vg, W, beard_only, beard_reg = S.get('Hmm'), S.get('L'), S.get('Vg'), S.get('W'), S.get('beard_only'), S.get('beard_reg')
+    best_, bh, black, bw, bx, by = S.get('best_'), S.get('bh'), S.get('black'), S.get('bw'), S.get('bx'), S.get('by')
+    ca_, catch, cb_, ch_, cheek_mid, chin_ln = S.get('ca_'), S.get('catch'), S.get('cb_'), S.get('ch_'), S.get('cheek_mid'), S.get('chin_ln')
+    clear_core, coi, core, cur, dark_hair, debug = S.get('clear_core'), S.get('coi'), S.get('core'), S.get('cur'), S.get('dark_hair'), S.get('debug')
+    dy, ex_, extra_black, ey_, eye_cx, eye_info = S.get('dy'), S.get('ex_'), S.get('extra_black'), S.get('ey_'), S.get('eye_cx'), S.get('eye_info')
+    eye_rows, face_box, face_med, fd, fdraw, flow_ink = S.get('eye_rows'), S.get('face_box'), S.get('face_med'), S.get('fd'), S.get('fdraw'), S.get('flow_ink')
+    gap_mm, geo, h, hair_black, hatch, head_area = S.get('gap_mm'), S.get('geo'), S.get('h'), S.get('hair_black'), S.get('hatch'), S.get('head_area')
+    horiz, in_box, ix, ix_, iy, iy_ = S.get('horiz'), S.get('in_box'), S.get('ix'), S.get('ix_'), S.get('iy'), S.get('iy_')
+    k_, keep, l, layers, lb_, light_left = S.get('k_'), S.get('keep'), S.get('l'), S.get('layers'), S.get('lb_'), S.get('light_left')
+    light_side, lines, ln_, lvl, mask, measure = S.get('light_side'), S.get('lines'), S.get('ln_'), S.get('lvl'), S.get('mask'), S.get('measure')
+    mous, mous_hatch, mous_solid, mous_sym, mous_white, mouth_m = S.get('mous'), S.get('mous_hatch'), S.get('mous_solid'), S.get('mous_sym'), S.get('mous_white'), S.get('mouth_m')
+    mouth_rows, nose_tip, nostril_pts, ok_, okc, okv = S.get('mouth_rows'), S.get('nose_tip'), S.get('nostril_pts'), S.get('ok_'), S.get('okc'), S.get('okv')
+    p, ppm, pth, pts, q, r_ = S.get('p'), S.get('ppm'), S.get('pth'), S.get('pts'), S.get('q'), S.get('r_')
+    redo, rgb, ribbon, rng, sd, sg = S.get('redo'), S.get('rgb'), S.get('ribbon'), S.get('rng'), S.get('sd'), S.get('sg')
+    sgn, sl, sm, solid_mass, strands_white, stv = S.get('sgn'), S.get('sl'), S.get('sm'), S.get('solid_mass'), S.get('strands_white'), S.get('stv')
+    t, teeth_only, w, wd, xc, xs = S.get('t'), S.get('teeth_only'), S.get('w'), S.get('wd'), S.get('xc'), S.get('xs')
+    ys_, zone = S.get('ys_'), S.get('zone')
+    fd = ImageDraw.Draw(fdraw)   # the copied canvas, never the cached one
     thr_shift = (0.5 - detail) * 0.3
     zone_thr = {0: 0.80, 1: 0.66, 2: 0.56, 3: 0.76}
     kept = []

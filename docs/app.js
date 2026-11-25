@@ -6,6 +6,7 @@ import { createEngine } from "./engine-client.js";
 const DEFAULTS = {
   diameter: 45.0, length: 250.0,
   art_source: "pattern:waves",
+  art_style: "trace", sketch_detail: 0.5, sketch_shading: true,
   tile_width_mm: null, n_around: 3, n_along: null,
   offset: "none", offset_fraction: 0.5, rotation: 0, mirror: true, invert: false, spacing: 0.0,
   depth: 1.5, draft_deg: 15.0, edge_round: 0.4,
@@ -213,21 +214,21 @@ function buildLive() {
 function artSource() {
   const wrap = el("div", { class: "row wide" });
   const sel = el("select", { id: "f-art" });
-  sel.append(el("option", { value: "upload", text: "Upload SVG, PNG or JPEG" }));
+  sel.append(el("option", { value: "upload", text: "Upload SVG, PNG, JPEG or WEBP" }));
   inputs.art_source = sel;
-  const file = el("input", { type: "file", id: "f-file", accept: "image/png,image/jpeg,image/svg+xml,.svg", hidden: true });
+  const file = el("input", { type: "file", id: "f-file", accept: "image/png,image/jpeg,image/webp,image/svg+xml,.svg,.webp", hidden: true });
   const name = el("p", { class: "upload-name" });
   const sync = () => {
     const up = sel.value === "upload";
     file.hidden = !up;
-    name.textContent = up ? (S.upload ? S.upload.name : "No file chosen. SVG is clean-up only, PNG and JPEG are traced.") : "";
+    name.textContent = up ? (S.upload ? S.upload.name : "No file chosen. SVG is clean-up only, drawings are traced, photos of people become a pen sketch.") : "";
   };
   sel.addEventListener("change", () => {
     if (sel.value === "upload") setParam("art_source", "upload");
     else setParam("art_source", "pattern:" + sel.value);
     sync();
   });
-  file.addEventListener("change", () => { S.upload = file.files[0] || null; sync(); schedule(); });
+  file.addEventListener("change", () => { useUpload(file.files[0] || null).then(sync); });
   engine.patterns().then((list) => {
     for (const pt of list.slice().reverse()) sel.prepend(el("option", { value: pt.id, text: pt.name }));
     const cur = S.params.art_source;
@@ -314,7 +315,7 @@ function buildForm() {
   }
   const reset = el("div", { class: "group-body" }, el("button", { type: "button", class: "btn", text: "Reset to the default part", onclick: () => {
     S.params = { ...DEFAULTS }; S.upload = null;
-    form.replaceChildren(); readoutEls = {}; buildForm(); syncEnabled(); readouts(); schedule();
+    form.replaceChildren(); readoutEls = {}; buildForm(); syncEnabled(); readouts(); schedule(); syncStyleUI();
     try { localStorage.removeItem("roller.params"); } catch (e) { /* ignore */ }
   } }));
   form.append(reset);
@@ -350,7 +351,7 @@ function busy(on) {
 async function requestPreview() {
   if (document.querySelector("input.invalid")) return;
   const file = S.params.art_source === "upload" ? S.upload : null;
-  if (S.params.art_source === "upload" && !file) { showEmpty("Upload a picture, or drag one onto this area. SVG, PNG or JPEG.", false); return; }
+  if (S.params.art_source === "upload" && !file) { showEmpty("Upload a picture, or drag one onto this area. SVG, PNG, JPEG or WEBP.", false); return; }
   const mine = ++S.seq;
   busy(true);
   try {
@@ -378,6 +379,7 @@ function applyPreview() {
   imageCache = null;
   drawSlab();
   buildRoller();
+  syncStyleUI();
 }
 
 /* ---------- derived strip ---------- */
@@ -799,24 +801,98 @@ const uploadBtn = $("upload-art");
 const syncUploadBtn = () => {
   const f = S.params.art_source === "upload" && S.upload;
   uploadBtn.textContent = f ? "Change picture" : "Upload a picture";
-  uploadBtn.title = f ? S.upload.name : "SVG, PNG or JPEG. PNG and JPEG are traced to black and white.";
+  uploadBtn.title = f ? S.upload.name : "SVG, PNG, JPEG or WEBP. Drawings are traced to black and white; a photo of a person becomes a pen sketch.";
 };
 /* The label opens its own always-rendered input (#upload-file): phones refuse to open a
    picker for an input inside a collapsed section, so the Art panel's input is not used here. */
-function useUpload(f) {
+/* WEBP goes through the browser's own decoder and reaches the engine as PNG, so it does not
+   depend on the Python build having a WEBP codec. */
+async function toEngineFile(f) {
+  if (!(/\.webp$/i.test(f.name) || f.type === "image/webp")) return f;
+  try {
+    const bmp = await createImageBitmap(f);
+    const c = document.createElement("canvas");
+    c.width = bmp.width; c.height = bmp.height;
+    c.getContext("2d").drawImage(bmp, 0, 0);
+    const blob = await new Promise((res) => c.toBlob(res, "image/png"));
+    if (!blob) return f;
+    return new File([blob], f.name.replace(/\.webp$/i, "") + ".png", { type: "image/png" });
+  } catch (e) { return f; }
+}
+/* More than 64 distinct grey levels in a 256 px thumbnail means a photograph, not a drawing. */
+async function looksLikePhoto(f) {
+  if (/\.svg$/i.test(f.name) || f.type === "image/svg+xml") return false;
+  try {
+    const bmp = await createImageBitmap(f);
+    const k = 256 / Math.max(bmp.width, bmp.height, 1);
+    const w = Math.max(1, Math.round(bmp.width * Math.min(1, k))), h = Math.max(1, Math.round(bmp.height * Math.min(1, k)));
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const g = c.getContext("2d", { willReadFrequently: true });
+    g.fillStyle = "#fff"; g.fillRect(0, 0, w, h);
+    g.drawImage(bmp, 0, 0, w, h);
+    const d = g.getImageData(0, 0, w, h).data;
+    const seen = new Set();
+    for (let i = 0; i < d.length; i += 4) seen.add(Math.round(0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]));
+    return seen.size > 64;
+  } catch (e) { return false; }
+}
+function syncStyleUI() {
+  const up = S.params.art_source === "upload" && !!S.upload;
+  const portrait = up && S.params.art_style === "portrait";
+  $("art-style").hidden = !up;
+  $("style-trace").setAttribute("aria-pressed", String(!portrait));
+  $("style-portrait").setAttribute("aria-pressed", String(portrait));
+  for (const id of ["pt-detail-wrap", "pt-shading-wrap", "pt-fit"]) $(id).hidden = !portrait;
+  $("pt-detail").value = S.params.sketch_detail;
+  $("pt-detail-out").textContent = Number(S.params.sketch_detail).toFixed(2);
+  $("pt-shading").checked = !!S.params.sketch_shading;
+  const rep = S.last && S.last.art_report && S.last.art_report.sketch;
+  const note = $("pt-note");
+  note.hidden = !(portrait && rep && rep.face_found === false);
+  note.textContent = note.hidden ? "" : "No face found; using the centre of the photo.";
+}
+async function useUpload(f) {
   if (!f) return;
-  S.upload = f;
+  const photo = await looksLikePhoto(f);
+  S.upload = await toEngineFile(f);
+  S.params.art_style = photo ? "portrait" : "trace";
+  S.last = null;
   const sel = $("f-art");
   sel.value = "upload";
   sel.dispatchEvent(new Event("change"));
+  setParam("art_style", S.params.art_style);
   syncUploadBtn();
-  schedule();
+  syncStyleUI();
 }
 $("upload-file").addEventListener("change", (e) => { useUpload(e.target.files[0]); e.target.value = ""; });
+$("style-trace").onclick = () => { setParam("art_style", "trace"); syncStyleUI(); };
+$("style-portrait").onclick = () => { setParam("art_style", "portrait"); syncStyleUI(); };
+$("pt-detail").addEventListener("input", (e) => { $("pt-detail-out").textContent = Number(e.target.value).toFixed(2); });
+$("pt-detail").addEventListener("change", (e) => setParam("sketch_detail", Number(e.target.value)));
+$("pt-shading").addEventListener("change", (e) => setParam("sketch_shading", e.target.checked));
+$("pt-fit").onclick = async () => {
+  if (!S.upload) return;
+  const b = $("pt-fit");
+  b.disabled = true;
+  try {
+    const r = await engine.fitPortrait({ ...S.params }, S.upload);
+    for (const k of ["diameter", "n_around", "n_along", "depth", "draft_deg"]) {
+      if (r[k] === undefined) continue;
+      S.params[k] = r[k];
+      if (inputs[k]) inputs[k].value = r[k];
+    }
+    S.params.tile_width_mm = null;
+    if (inputs.tile_width_mm) inputs.tile_width_mm.value = "";
+    setParam("n_along", r.n_along);
+  } catch (e) {
+    $("pt-note").hidden = false; $("pt-note").textContent = "Could not fit the roller: " + e.message;
+  } finally { b.disabled = false; }
+};
 $("f-file").addEventListener("change", syncUploadBtn);
 /* Drag a picture onto the slab to use it. */
 const slabWrap = $("slab-wrap");
-const ARTISH = /\.(png|jpe?g|svg)$/i;
+const ARTISH = /\.(png|jpe?g|webp|svg)$/i;
 slabWrap.addEventListener("dragover", (e) => { e.preventDefault(); slabWrap.classList.add("drop"); });
 slabWrap.addEventListener("dragleave", () => slabWrap.classList.remove("drop"));
 slabWrap.addEventListener("drop", (e) => {

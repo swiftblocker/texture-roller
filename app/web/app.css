@@ -388,3 +388,15 @@ input[type="checkbox"] { accent-color: var(--color-accent); width: 16px; height:
 .vh-file { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 label.btn-upload { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; user-select: none; }
 label.btn-upload:has(+ .vh-file:focus-visible) { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+
+/* portrait controls in the slab toolbar */
+.art-style[hidden], .pt[hidden] { display: none !important; }
+.slider { display: inline-flex; align-items: center; gap: 8px; min-height: var(--ctl); font-size: var(--step--1); color: var(--color-ink-2); }
+.slider input[type="range"] { width: 140px; min-height: var(--ctl); accent-color: var(--color-accent); }
+.slider output { min-width: 3ch; font-variant-numeric: tabular-nums; }
+@media (max-width: 767px) {
+  .toolbar .slider { grid-column: 1 / -1; justify-content: space-between; min-height: 48px; padding: 0 12px; background: var(--color-panel); }
+  .toolbar .slider input[type="range"] { flex: 1; width: auto; min-height: 44px; }
+  .toolbar #pt-fit { grid-column: 1 / -1; }
+}
+@media (max-width: 767px) { .toolbar #pt-shading-wrap { grid-column: 1 / -1; justify-content: center; } }

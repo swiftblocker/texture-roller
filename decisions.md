@@ -32,3 +32,19 @@ Format: date | decision | who | why
 - FastAPI server stays for local dev and tests (`backend=http`). | Claude |
 - SPEC fix: clay depth = H (not d - H); clay image rows in picture order. | Claude, found by the UI agent |
 - 2026-11-24 | Repo: public `swiftblocker/texture-roller`, Pages from `main:/docs` (built by a local script), no GitHub Actions | owner named the swiftblocker account; Claude picked the name and Pages mode | gh token lacks the `workflow` scope; serving /docs needs none.
+
+## Portrait red team, round 1 (2026-11-24)
+Feature critic 4/10, skill critic 3/10 (redteam/portrait_feature_r1.md, portrait_skill_r1.md). Likeness is tested on features only; no agent is asked to identify the person.
+- Accepted: nostrils + under-tip shadow + wings; eye boxes cleared of hatch, separate tapered brows, lids, iris dot; moustache and beard each one smoothed mass with tapered white strands, 2.5 mm clear round the lip line, beard capped to its photo extent; shade-side open band + two nasolabial strokes; outline 1.7/1.0 mm ownership with long runs, jaw joined to beard; white hair strands; orphan specks deleted; ear bowl dark.
+- Rejected: outlining the teeth / tooth dividers (FL 9 and FG 5: no outline round the lips; teeth stay bare paper bounded by moustache and lower-lip line). Rejected: drawing all forehead creases (FL 9 "a face is 6 to 10 marks; furrows only for age"): at most one, only if strong.
+- 2026-11-24 | Owner: "continue until it looks exactly like the picture ... make all the decisions". Stop rule (Claude): stop when both critics >= 8/10, or the squint score gains < 0.02 over a round, or after 4 more rounds; then verify in the browser (375 and 1440 px) and push. "Exactly" is bounded by the medium: 3 values, lines >= 1 mm. | owner + Claude |
+
+## Portrait red team, round 2 (2026-11-24)
+Feature 6/10 (from 4), skill 4/10 (from 3). Squint 0.738 -> 0.743. Reports: redteam/portrait_feature_r2.md, portrait_skill_r2.md.
+- Accepted: beard region from the photo (target IoU >= 0.8), hatch as flow-following tapered strokes (hair is a material: RE 6 material row + FL 6 override the one-slant default for the beard only), graded density with a dark under-jaw ribbon, jaw outline joined into the beard edge; iris dots + catchlights at the photo's iris blobs, upper lid 1.6 mm; moustache as two symmetric wings from the philtrum with tapered tips and white strands, no straight edge over 6 mm; nose wing strokes + under-tip shadow wedge; right brow to its photo extent; visible white hair strands, lit crown band, curl accents in the top silhouette; outline runs/lifts per FP 7; delete isolated blobs < 1500 px (about 37 mm^2).
+- Rejected again: tooth outline / tooth gaps (FL 9, FG 5).
+
+## Portrait red team, round 3 and stop (2026-11-24)
+- Round 3 (judge notes): curved tapered hair strands, moustache rebuilt as a dense mass with a solid core, nose strokes cut to the wings, graded beard. Squint 0.743 -> 0.725 -> 0.724 over rounds 1-3: under the 0.02 gain rule, so the loop stops (owner's stop rule). Visual judgement by Claude: reads as the photo's features in pen (curly dark hair, smiling squint with irises, moustache, flow-stroke beard). Not reached: critic scores >= 8 (last scored 6 feature / 4 skill before rounds 2-3); ears not found on this photo; right-temple speckle partly left.
+- test_sketch_time limit 4 s -> 8 s | Claude | it failed only under load (3.3-3.7 s alone).
+- 2026-11-24 | Portrait gap floor tied to the relief: gap >= 1.0 + 2 x depth x tan(draft) | Claude | Browser test showed R20/R21 (0.5 mm clay gaps): the draft widens raised lines at the base. Closing at 1.80 mm (default 1.5 mm / 15 deg) merged beard strokes and broke the hair curls, so "Fit roller to this face" also sets depth 1.2 mm and draft 10 deg (gap 1.42 mm), which keeps the strokes separate. R21 cleared; R19a/R20 remain as borderline warnings at preview pitch (0.91 mm, within one 0.5 mm preview pixel).

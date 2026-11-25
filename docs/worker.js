@@ -1,5 +1,5 @@
 /* Web Worker: runs the Python engine in Pyodide, entirely in the browser.
- * Messages in:  {id, op, ...args}   op = preview | export | test_strip | solve_repeat | patterns
+ * Messages in:  {id, op, ...args}   op = preview | export | test_strip | solve_repeat | patterns | fit_portrait
  * Messages out: {type:"progress", text, done, total}, {type:"ready"}, {type:"fatal", message},
  *               {type:"result", id, ok, json, zip, error}
  * All URLs are relative to this file so it works under a GitHub Pages subpath. */
@@ -113,6 +113,9 @@ def op_test_strip(p):
 def op_solve(tw, dmin, dmax, mx):
     return _dumps(api.solve_repeat(float(tw), float(dmin), float(dmax), int(mx)))
 
+def op_fit(p, u):
+    return _dumps(api.fit_portrait(json.loads(p), _up(u)))
+
 def op_patterns():
     return _dumps(api.patterns())
 `;
@@ -164,6 +167,7 @@ function run(m) {
     case "export": return out("op_export", m.params, m.upload || null, m.name || null);
     case "test_strip": return out("op_test_strip", m.params);
     case "solve_repeat": return out("op_solve", m.tw, m.dmin, m.dmax, m.mx);
+    case "fit_portrait": return out("op_fit", m.params, m.upload || null);
     case "patterns": return out("op_patterns");
     default: throw new Error("unknown op " + m.op);
   }

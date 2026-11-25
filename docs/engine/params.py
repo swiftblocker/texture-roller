@@ -14,6 +14,7 @@ ENUMS = {
     "bore_preset": ("dowel_half", "none", "rod_8", "dowel_3q", "custom"),
     "clay_body": ("stoneware", "porcelain", "earthenware", "paper"),
     "clay_state": ("soft", "firm", "leather"),
+    "art_style": ("trace", "portrait"),
 }
 BORE_BASE = {"dowel_half": 12.70, "dowel_3q": 19.05, "rod_8": 8.00}
 SHRINK = {"earthenware": 7.0, "stoneware": 12.5, "porcelain": 15.0, "paper": 14.0}
@@ -25,6 +26,9 @@ class Params:
     diameter: float = 45.0
     length: float = 250.0
     art_source: str = "pattern:waves"
+    art_style: str = "trace"
+    sketch_detail: float = 0.5
+    sketch_shading: bool = True
     tile_width_mm: float | None = None
     n_around: float = 3
     n_along: float | None = None

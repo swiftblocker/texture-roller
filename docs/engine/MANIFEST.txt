@@ -9,4 +9,5 @@ mesh.py
 params.py
 relief.py
 rules.py
+sketch.py
 data/checks.json

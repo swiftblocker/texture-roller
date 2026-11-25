@@ -35,7 +35,15 @@
   <section class="centre" aria-label="Clay slab preview">
     <div class="toolbar" role="toolbar" aria-label="Slab view">
       <label id="upload-art" class="btn btn-upload" for="upload-file">Upload a picture</label>
-      <input type="file" id="upload-file" class="vh-file" accept="image/png,image/jpeg,image/svg+xml,.svg,.png,.jpg,.jpeg">
+      <input type="file" id="upload-file" class="vh-file" accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg,.png,.jpg,.jpeg,.webp">
+      <div class="seg art-style" id="art-style" role="group" aria-label="What the picture is" hidden>
+        <button type="button" id="style-trace" aria-pressed="true">Drawing or logo</button>
+        <button type="button" id="style-portrait" aria-pressed="false">Photo of a person</button>
+      </div>
+      <label class="slider pt" id="pt-detail-wrap" hidden><span class="lbl">Detail</span><input type="range" id="pt-detail" min="0" max="1" step="0.05" value="0.5" aria-label="Detail"><output id="pt-detail-out" class="unit">0.50</output></label>
+      <label class="check pt" id="pt-shading-wrap" hidden><input type="checkbox" id="pt-shading" checked> Shading</label>
+      <button type="button" id="pt-fit" class="btn pt" hidden>Fit roller to this face</button>
+      <span id="pt-note" class="caption pt" role="status" hidden></span>
       <div class="seg" role="group" aria-label="Size basis">
         <button type="button" id="size-wet" aria-pressed="true">Wet size</button>
         <button type="button" id="size-fired" aria-pressed="false">Fired size</button>

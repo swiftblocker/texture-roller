@@ -10,6 +10,7 @@
  *   exportZip(params, file|null)     -> {rules, blocked, files, href, filename}
  *   testStrip(params)                -> same shape
  *   solveRepeat(tileWidth)           -> [{diameter,n_around,C,stretch_pct}]
+ *   fitPortrait(params, file)        -> {diameter,n_around,n_along,face_found}
  * All URLs are relative, so a GitHub Pages subpath works. */
 
 /* Phones have far less RAM than a computer, so the export mesh is coarser there. */
@@ -101,6 +102,7 @@ async function httpEngine(onProgress) {
     exportZip: async (params, file) => done(await fetch("api/export", { method: "POST", body: form(params, file) })),
     testStrip: async (params) => done(await fetch("api/test_strip", { method: "POST", body: form(params, null) })),
     solveRepeat: async (tw) => check(await fetch("api/solve_repeat?tile_width=" + encodeURIComponent(tw))),
+    fitPortrait: async (params, file) => check(await fetch("api/fit_portrait", { method: "POST", body: form(params, file) })),
   };
 }
 
@@ -199,5 +201,6 @@ async function pyodideEngine(onProgress) {
     exportZip: async (params, file) => asDownload(await call({ op: "export", params: JSON.stringify(params), upload: await bytesOf(file), name: file ? file.name : null }), "roller"),
     testStrip: async (params) => asDownload(await call({ op: "test_strip", params: JSON.stringify(params) }), "roller-test-strip"),
     solveRepeat: async (tw) => JSON.parse((await call({ op: "solve_repeat", tw, dmin: 25, dmax: 100, mx: 12 })).json),
+    fitPortrait: async (params, file) => JSON.parse((await call({ op: "fit_portrait", params: JSON.stringify(params), upload: await bytesOf(file) })).json),
   };
 }

@@ -3,3 +3,5 @@ __pycache__/
 .pytest_cache/
 app/out/
 .claude/settings.local.json
+docs/_local_test*
+redteam/portrait_*

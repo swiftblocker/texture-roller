@@ -23,8 +23,15 @@ class Field:
 
 def compute(P: Params, upload=None, upload_name=None, pitch=None) -> Field:
     pitch = pitch or P.pitch_preview
-    art = artmod.load(P.art_source, upload, upload_name)
+    tw = P.tile_width_mm or (P.C / P.n_int)
+    tw = max(20.0, tw - max(0.0, P.spacing))
+    # Draft widens every raised line at its base by depth*tan(draft) per side, so the sketch
+    # leaves gaps wide enough that the clay gap stays >= 1.0 mm (R20, R21).
+    gap = 1.0 + 2.0 * P.depth * math.tan(math.radians(P.draft_deg))
+    art = artmod.load(P.art_source, upload, upload_name, P.art_style, tw, P.sketch_detail, P.sketch_shading, gap)
     lay = layoutmod.build(P, art, pitch)
+    if art.sketch:
+        lay.art_report["sketch"] = art.sketch
     H = relief.height_field(P, lay)
     Rm = relief.radius_map(P, H, lay)
     met = relief.metrics(P, H, lay)
@@ -72,6 +79,21 @@ def preview(params: dict, upload: bytes | None = None, upload_name: str | None =
                  "data_b64": _b64(np.clip(np.round(K / P.depth * 255.0), 0, 255).astype(np.uint8))},
         "art_report": F.lay.art_report,
     }
+
+
+def fit_portrait(params: dict, upload: bytes | None) -> dict:
+    """One face per revolution, art height = length - 2 x band. -> {diameter, n_around, n_along, face_found}."""
+    from . import sketch as sketchmod
+    P = Params.from_dict(params)
+    if not upload:
+        raise artmod.ArtError("no picture to fit")
+    aspect, found = sketchmod.head_aspect(upload)
+    art_h = max(10.0, P.length - 2 * P.band_eff)
+    width = art_h * aspect
+    d = min(100.0, max(16.0, math.floor(width / math.pi * 10.0) / 10.0))
+    # Portrait relief: shallower and gentler than the default so the sketch's close strokes
+    # stay separate in clay (gap floor 1.0 + 2 d tan(draft) = 1.42 mm). R13 range, R17 soft clay 1-2 mm, R22 >= 5 deg.
+    return {"diameter": d, "n_around": 1, "n_along": 1, "depth": 1.2, "draft_deg": 10.0, "face_found": bool(found)}
 
 
 def patterns() -> list:

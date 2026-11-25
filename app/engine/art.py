@@ -29,6 +29,7 @@ class Art:
     """subpaths: list of segment lists. segment = ('L',p0,p1) or ('C',p0,c1,c2,p1); points (x,y), y up."""
 
     def __init__(self, subpaths, frame, tiles=False, traced=False, name=""):
+        self.sketch = None  # portrait report dict (art_style "portrait")
         self.subpaths = subpaths
         self.frame = frame  # (x0,y0,x1,y1)
         self.tiles = tiles
@@ -56,7 +57,9 @@ class Art:
         w, h = (x1 - x0), (y1 - y0)
         if k % 2:
             w, h = h, w
-        return Art(sub, (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2), self.tiles, self.traced, self.name)
+        a = Art(sub, (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2), self.tiles, self.traced, self.name)
+        a.sketch = self.sketch
+        return a
 
     def flatten(self, scale):
         """-> (list of Nx2 arrays in art units, report). scale = mm per art unit."""
@@ -103,9 +106,20 @@ def raster_polys(polys, sx, sy, fx0, fy0, ox, oy, ny, nx, ps):
     ps = (psx, psy) mm per pixel. Pixel (r,c) centre at ((c+.5)*psx, (r+.5)*psy) mm; row 0 = y min. Even-odd = XOR of subpaths."""
     from skimage.draw import polygon
     m = np.zeros((ny, nx), bool)
+    from PIL import Image, ImageDraw
     for a in polys:
         c = ((a[:, 0] - fx0) * sx + ox) / ps[0] - 0.5
         r = ((a[:, 1] - fy0) * sy + oy) / ps[1] - 0.5
+        if len(a) > 40 and (c.max() - c.min()) * (r.max() - r.min()) > 4e4:
+            # large polygons (traced portraits): PIL scanline fill, skimage's point-in-polygon is far slower
+            c0, r0 = int(max(0, math.floor(c.min()) - 1)), int(max(0, math.floor(r.min()) - 1))
+            c1, r1 = int(min(nx, math.ceil(c.max()) + 2)), int(min(ny, math.ceil(r.max()) + 2))
+            if c1 <= c0 or r1 <= r0:
+                continue
+            im = Image.new("1", (c1 - c0, r1 - r0), 0)
+            ImageDraw.Draw(im).polygon([(float(x - c0), float(y - r0)) for x, y in zip(c, r)], fill=1)
+            m[r0:r1, c0:c1] ^= np.asarray(im, bool)
+            continue
         rr, cc = polygon(r, c, shape=(ny, nx))
         if len(rr):
             m[rr, cc] ^= True
@@ -209,7 +223,6 @@ def _load_svg(data: bytes) -> Art:
 def _load_raster(data: bytes) -> Art:
     from PIL import Image
     from skimage.filters import threshold_otsu
-    import potrace
     im = Image.open(io.BytesIO(data))
     if im.mode in ("RGBA", "LA", "P"):
         im = im.convert("RGBA")
@@ -225,7 +238,13 @@ def _load_raster(data: bytes) -> Art:
     if g.min() == g.max():
         raise ArtError("image is a single flat colour")
     th = threshold_otsu(g)
-    mask = np.pad(g <= th, 1)  # dark = filled art
+    return _trace_mask(g <= th)
+
+
+def _trace_mask(ink) -> Art:
+    """Bool mask (True = filled art, row 0 = top) -> Art of Bezier subpaths via potrace."""
+    import potrace
+    mask = np.pad(np.asarray(ink, bool), 1)
     plist = potrace.Bitmap(~mask).trace(turdsize=2, alphamax=1.0, opticurve=True, opttolerance=0.2)
     H, W = mask.shape
     subpaths = []
@@ -252,7 +271,27 @@ _CACHE: "OrderedDict[str, Art]" = OrderedDict()
 LAST = (None, None)
 
 
-def load(art_source: str, upload: bytes | None = None, upload_name: str | None = None) -> Art:
+def _load_portrait(upload: bytes, tile_w: float, detail: float, shading: bool, gap_mm: float = 1.0) -> Art:
+    from . import sketch as sketchmod
+    sk = sketchmod.make_sketch(upload, tile_w, detail=detail, shading=shading, measure=False, gap_mm=gap_mm)
+    m = sk.mask
+    # trace at most ~5 px/mm: potrace is pure Python in the browser
+    if sk.ppm > 5.0:
+        f = 5.0 / sk.ppm
+        from PIL import Image
+        im = Image.fromarray((m * 255).astype(np.uint8)).resize(
+            (max(8, int(m.shape[1] * f)), max(8, int(m.shape[0] * f))), Image.BOX)
+        m = np.asarray(im) >= 128
+    a = _trace_mask(m)
+    a.name = "portrait"
+    rep = dict(sk.report)
+    a.sketch = rep
+    return a
+
+
+def load(art_source: str, upload: bytes | None = None, upload_name: str | None = None,
+         art_style: str = "trace", tile_width_mm: float | None = None,
+         sketch_detail: float = 0.5, sketch_shading: bool = True, sketch_gap_mm: float = 1.0) -> Art:
     if art_source.startswith("pattern:"):
         key = art_source
         if key not in _CACHE:
@@ -263,15 +302,29 @@ def load(art_source: str, upload: bytes | None = None, upload_name: str | None =
     global LAST
     LAST = (upload, upload_name)
     key = hashlib.sha1(upload).hexdigest()
+    head = upload[:512].lstrip().lower()
+    nm = (upload_name or "").lower()
+    is_svg = nm.endswith(".svg") or head.startswith(b"<?xml") or b"<svg" in head
+    portrait = art_style == "portrait" and not is_svg
+    if portrait:
+        tw = float(tile_width_mm or 140.0)
+        key = "%s|portrait|%.1f|%.2f|%d|%.2f" % (key, round(tw * 2) / 2.0, round(float(sketch_detail), 2), 1 if sketch_shading else 0, round(float(sketch_gap_mm), 2))
     if key in _CACHE:
         _CACHE.move_to_end(key)
         return _CACHE[key]
-    head = upload[:512].lstrip().lower()
-    nm = (upload_name or "").lower()
-    if nm.endswith(".svg") or head.startswith(b"<?xml") or b"<svg" in head:
-        a = _load_svg(upload)
-    else:
-        a = _load_raster(upload)
+    try:
+        if is_svg:
+            a = _load_svg(upload)
+        elif portrait:
+            a = _load_portrait(upload, round(tw * 2) / 2.0, float(sketch_detail), bool(sketch_shading), float(sketch_gap_mm))
+        else:
+            a = _load_raster(upload)
+    except ArtError:
+        raise
+    except Exception as exc:
+        if is_svg or not portrait:
+            raise
+        raise ArtError("could not read the picture: %s" % exc)
     _CACHE[key] = a
     while len(_CACHE) > 8:
         _CACHE.popitem(last=False)

@@ -152,6 +152,20 @@ async def export(params: str = Form(...), art: Optional[UploadFile] = File(None)
     return _run_export("export", p, data, name)
 
 
+@app.post("/api/fit_portrait")
+async def fit_portrait(params: str = Form(...), art: Optional[UploadFile] = File(None)):
+    p = _parse(params)
+    data, _name = await _read_upload(art)
+    if ENGINE is None:
+        raise HTTPException(503, "engine not loaded")
+    if not data:
+        raise HTTPException(400, "no picture")
+    try:
+        return JSONResponse(ENGINE.fit_portrait(p, data))
+    except Exception as exc:
+        raise HTTPException(422, f"{type(exc).__name__}: {exc}")
+
+
 @app.post("/api/test_strip")
 async def test_strip(params: str = Form(...)):
     return _run_export("test_strip", _parse(params), None, None)

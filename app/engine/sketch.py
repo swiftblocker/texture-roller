@@ -19,6 +19,7 @@ MAX_AREA = 1.7e6     # raster pixels; keeps the sketch inside a few seconds on a
 FLOOR = 1.0          # mm, clay floor for lines and gaps
 LW = 1.55            # mm, thinnest line drawn. The roller's draft and edge round eat about 0.65 mm of a raised
                      # line's width at 0.75 of the depth (R19b blocks under 0.8 mm), so lines are drawn 1.5 mm and up
+VTHR = 0.06          # crease strength (blur 2.5 mm minus blur 0.5 mm of L) that earns a line
 PITCH = 3.7          # mm, hatch pitch (gap = 2.1 mm = 1.4 w, never under 1.0 mm)
 
 
@@ -228,6 +229,51 @@ def _stamp(draw, pts, width_px):
 def _profile(n, w_mid, w_end, power=0.8):
     t = np.linspace(0, 1, n)
     return w_end + (w_mid - w_end) * np.sin(np.pi * t) ** power
+
+
+def _valley_path(V, p0, p1, half_px, step_px=2.0):
+    """Darkest groove from p0 to p1 inside a corridor: dynamic programming over sideways offsets,
+    one px of drift per step at most. V is a groove-strength field (higher = darker crease).
+    Returns (pts Nx2 x,y, strength per point)."""
+    p0, p1 = np.asarray(p0, float), np.asarray(p1, float)
+    d = p1 - p0
+    L_ = float(np.hypot(*d))
+    if L_ < 4 * step_px:
+        return None, None
+    t_ = d / L_
+    n_ = np.array([-t_[1], t_[0]])
+    ns = int(L_ / step_px) + 1
+    offs = np.arange(-int(half_px), int(half_px) + 1, dtype=float)
+    base = p0[None, :] + np.linspace(0, L_, ns)[:, None] * t_[None, :]
+    P = base[:, None, :] + offs[None, :, None] * n_[None, None, :]
+    h, w = V.shape
+    xi = np.clip(P[..., 0].round().astype(int), 0, w - 1)
+    yi = np.clip(P[..., 1].round().astype(int), 0, h - 1)
+    S = V[yi, xi]
+    no = len(offs)
+    acc = S[0].copy() - 0.002 * np.abs(offs)
+    back = np.zeros((ns, no), int)
+    for i in range(1, ns):
+        best = acc.copy()
+        arg = np.arange(no)
+        for sh in (-1, 1):
+            cand = np.roll(acc, sh)
+            if sh == 1:
+                cand[0] = -1e9
+            else:
+                cand[-1] = -1e9
+            better = cand > best
+            best = np.where(better, cand, best)
+            arg = np.where(better, np.arange(no) - sh, arg)
+        acc = best + S[i]
+        back[i] = arg
+    j = int(np.argmax(acc))
+    idx = np.zeros(ns, int)
+    for i in range(ns - 1, -1, -1):
+        idx[i] = j
+        j = back[i, j]
+    pts = P[np.arange(ns), idx]
+    return pts, S[np.arange(ns), idx]
 
 
 def _smooth_poly(pts, win):
@@ -443,7 +489,7 @@ def _flow_strokes(region, fx, fy, spm, ppm, rng, lens, wmid_mm, seed_mm=1.5, ext
     h, w = region.shape
     img = Image.new("L", (w, h), 0)
     dr = ImageDraw.Draw(img)
-    rads = {2.6: 2.6, 2.8: 2.7, 3.4: 3.4, 5.2: 4.5, "stop": 2.35}
+    rads = {2.6: 3.2, 2.8: 3.2, 3.4: 3.5, 5.2: 4.5, "stop": 3.2}    # gap >= 1.45 mm after a 1.7 mm stroke (portrait gap floor)
     forb = {k: np.zeros((h, w), bool) for k in rads}
     disks = {k: _bdisk(r * ppm) for k, r in rads.items()}
     ys, xs = np.nonzero(region)
@@ -703,8 +749,11 @@ def make_sketch(upload: bytes, tile_width_mm: float, detail: float = 0.5, shadin
     fdraw = Image.new("L", (w, h), 0)
     fd = ImageDraw.Draw(fdraw)
     clear_f = np.zeros((h, w), bool)          # no hatch, lines or black here: eyes and brows own it
+    clear_core = np.zeros((h, w), bool)       # tighter: the creases round the eye may still be drawn
     catch_f = np.zeros((h, w), bool)
     eye_cx = []
+    eye_rows = []
+    eye_info = []
     for sd, (c0, c1) in enumerate(((0.12, 0.46), (0.54, 0.88))):
         xa, xb = int(max(0, bx + c0 * bw)), int(min(w, bx + c1 * bw))
         i0, i1 = xa + int(0.2 * (xb - xa)), xb - int(0.1 * (xb - xa))
@@ -737,6 +786,7 @@ def make_sketch(upload: bytes, tile_width_mm: float, detail: float = 0.5, shadin
                     if pts is not None:
                         _stamp(fd, pts, wd)
         clear_f[int(max(0, brow_r - 5.5 * ppm)):int(brow_r + 5.5 * ppm), xa:xb] = True
+        clear_core[int(max(0, brow_r - 5.5 * ppm)):int(brow_r + 5.5 * ppm), xa:xb] = True
         # eye: lid line from the dark slit, iris dot, catchlight; sclera stays bare paper
         r0, r1 = int(max(0, eye_r - 3.0 * ppm)), int(min(h, eye_r + 3.0 * ppm))
         x0e, x1e = xa + int(0.15 * (xb - xa)), xb - int(0.05 * (xb - xa))
@@ -762,48 +812,59 @@ def make_sketch(upload: bytes, tile_width_mm: float, detail: float = 0.5, shadin
             catch_f |= _disk((h, w), ix + 0.8 * ppm, iy + 0.4 * ppm, 0.55 * ppm)
             eye_cx.append(ix)
         clear_f[int(max(0, eye_r - 6.5 * ppm)):int(eye_r + 8.0 * ppm), xa:xb] = True
+        eye_rows.append(float(eye_r))
+        eye_info.append((x0e, x1e, float(eye_r), sd))
+        clear_core[int(max(0, eye_r - 6.5 * ppm)):int(eye_r + 3.5 * ppm), xa:xb] = True
     xc = float(np.mean(eye_cx)) if len(eye_cx) == 2 else bx + 0.5 * bw
-    # nose: two solid nostrils, a wing arc from each, a shadow under the tip (FG 5 Nose)
+    # nose (red team mouth r1 #4, FG 5 Nose): the tip is the brightest spot, one nostril dark on each side of it,
+    # each wing one curved stroke traced up its own crease; no bridge line, no outline round the tip
     nostril_pts = []
     nose_clear = np.zeros((h, w), bool)
-    nb0, nb1 = int(by + 0.50 * bh), int(by + 0.64 * bh)
-    nbx0, nbx1 = int(max(0, xc - 0.15 * bw)), int(min(w, xc + 0.15 * bw))
+    nose_tip = None
+    nb0, nb1 = int(by + 0.48 * bh), int(by + 0.66 * bh)
+    nbx0, nbx1 = int(max(0, xc - 0.20 * bw)), int(min(w, xc + 0.20 * bw))
     nbox = np.zeros((h, w), bool)
     nbox[nb0:nb1, nbx0:nbx1] = True
     nbox &= mask
+    Lsn = _gauss(L, 2.5 * ppm)
+    Vn = (Lsn - _gauss(L, 0.5 * ppm)) / (Lsn + 0.15)
     if nbox.sum() > 100:
-        cut = np.percentile(L05[nbox], 8)
-        cand = _open(nbox & (L05 <= cut), 0.4 * ppm)
+        tipbox = nbox & (np.abs(xs - xc) < 0.09 * bw)       # the shiny cheeks are brighter than the tip: stay central
+        tb_ = np.where(tipbox, _gauss(L, 2.0 * ppm), -1.0)
+        ty_, tx_ = np.unravel_index(int(np.argmax(tb_)), tb_.shape)
+        nose_tip = (float(tx_), float(ty_))
+        nrow = nbox & (ys_ > ty_ + 1.0 * ppm) & (ys_ < ty_ + 8.0 * ppm)
+        cut = np.percentile(Vn[nrow], 90) if nrow.sum() > 50 else 9.0
+        cand = _open(nrow & (Vn >= cut), 0.4 * ppm)
         lb_, nn_ = ndi.label(cand)
         best = {}
         for o in range(1, nn_ + 1):
             cyo, cxo = ndi.center_of_mass(lb_ == o)
             ar = float((lb_ == o).sum())
-            sdn = 0 if cxo < xc else 1
-            if sdn not in best or ar > best[sdn][2]:
-                best[sdn] = (cxo, cyo, ar)
+            if abs(cxo - tx_) < 2.0 * ppm or abs(cxo - tx_) > 0.17 * bw:
+                continue
+            sdn = 0 if cxo < tx_ else 1
+            sc_ = ar * float(np.clip(1.4 - abs(cyo - ty_) / (8.0 * ppm), 0.2, 1.4))
+            if sdn not in best or sc_ > best[sdn][2]:
+                best[sdn] = (cxo, cyo, sc_)
         for sdn, (cxo, cyo, ar) in best.items():
             nostril_pts.append((cxo, cyo, -1.0 if sdn == 0 else 1.0))
     for (cxo, cyo, sg) in nostril_pts:
-        fd.ellipse((cxo - 2.4 * ppm, cyo - 1.7 * ppm, cxo + 2.4 * ppm, cyo + 1.7 * ppm), fill=255)
-        nose_clear[int(cyo - 4 * ppm):int(cyo + 6 * ppm), int(cxo - 4 * ppm):int(cxo + 4 * ppm)] = True
-        t = np.linspace(0, 1, 40)[:, None]
-        p0 = np.array([cxo + sg * 2.8 * ppm, cyo - 0.6 * ppm])
-        p1 = np.array([cxo + sg * 8.0 * ppm, cyo + 0.4 * ppm])
-        p2 = np.array([cxo + sg * 7.6 * ppm, cyo - 4.4 * ppm])
-        arc = (1 - t) ** 2 * p0 + 2 * (1 - t) * t * p1 + t ** 2 * p2
-        _stamp(fd, arc, np.linspace(2.0, LW, 40) * ppm)
-    if len(nostril_pts) == 2:
-        (xl, yl, _), (xr, yr, _) = sorted(nostril_pts)
-        ysh = 0.5 * (yl + yr) + 4.4 * ppm
-        L12s = L12
-        xi = int(np.clip(0.5 * (xl + xr), 0, w - 1)); yi = int(np.clip(ysh, 0, h - 1))
-        if float(L12s[yi, xi]) < face_med - 0.04:
-            t = np.linspace(0, 1, 30)
-            xmid = 0.5 * (xl + xr)
-            sh = np.stack([xmid - 7.0 * ppm + 14.0 * ppm * t, ysh + 1.0 * ppm * np.sin(np.pi * t)], 1)
-            _stamp(fd, sh, _profile(30, 2.0 * ppm, LW * ppm))
-
+        # nostril: a small comma, tilted down toward the middle
+        tt = np.linspace(0, 1, 20)[:, None]
+        q0 = np.array([cxo + sg * 2.6 * ppm, cyo - 0.7 * ppm]); q2 = np.array([cxo - sg * 2.4 * ppm, cyo + 0.6 * ppm])
+        q1 = np.array([cxo, cyo + 0.9 * ppm])
+        cm_ = (1 - tt) ** 2 * q0 + 2 * (1 - tt) * tt * q1 + tt ** 2 * q2
+        _stamp(fd, cm_, np.linspace(3.2, 1.9, 20) * ppm)
+        nose_clear[int(cyo - 4 * ppm):int(cyo + 4 * ppm), int(cxo - 4 * ppm):int(cxo + 4 * ppm)] = True
+        # wing: its crease from beside the nostril up and out round the bulb
+        pth, stv = _valley_path(Vn, (cxo + sg * 3.0 * ppm, cyo + 0.5 * ppm), (cxo + sg * 6.5 * ppm, cyo - 7.0 * ppm), 2.5 * ppm, 1.0)
+        if pth is not None:
+            okw = np.nonzero(stv > 0.03)[0]
+            if len(okw) >= 3 * ppm:
+                pw_ = _smooth_poly(pth[:okw.max() + 1], int(2 * ppm))
+                _stamp(fd, pw_, _profile(len(pw_), 2.0 * ppm, LW * ppm))
+                nose_clear |= ndi.binary_dilation(np.zeros((h, w), bool), iterations=1)
     # -------- black (FP 5)
     eye_boxes = []
     for (c0, c1) in ((0.15, 0.45), (0.55, 0.85)):
@@ -838,6 +899,13 @@ def make_sketch(upload: bytes, tile_width_mm: float, detail: float = 0.5, shadin
         # side hair: one coherent mass or nothing, no porous mosaic (red team r3)
         side_m = side_h & ~(ys_ < by + 0.15 * bh)
         hs_ = _fill_small_holes(_close(hm & side_m, 3.5 * ppm) & hair_zone, 120 * ppm * ppm)
+        # an ear is skin, not hair: lit, skin-coloured pixels never join the side mass (red team mouth r3 #3)
+        dRB0 = _gauss(rgb[..., 0].astype(np.float32) - rgb[..., 2].astype(np.float32), 0.8 * ppm)
+        fin0 = face_in & (ys_ > by + 0.45 * bh)
+        srb = float(np.median(dRB0[fin0])) if fin0.sum() > 100 else 60.0
+        skin_like = (L06 > face_med - 0.12) & (np.abs(dRB0 - srb) < 22.0)
+        skin_like = _open(skin_like, 1.0 * ppm)
+        hs_ = _open(hs_ & ~ndi.binary_dilation(skin_like, iterations=int(0.8 * ppm)), 1.5 * ppm)
         hm = (hm & ~side_m) | hs_
         black |= hm
         hair_black = hm
@@ -911,8 +979,7 @@ def make_sketch(upload: bytes, tile_width_mm: float, detail: float = 0.5, shadin
         lb_, nsp = ndi.label(sp)
         if nsp:
             szs = ndi.sum(sp, lb_, index=np.arange(1, nsp + 1))
-            if szs.max() >= 8 * ppm * ppm:
-                core = _close(lb_ == (1 + int(np.argmax(szs))), 1.5 * ppm)
+            pass                                  # no solid slot under the lip (red team mouth r1 #8)
     # beard footprint straight from the photo: stubble texture or clearly darker than skin, not the shirt (red team r2 #1)
     collar_ = _gauss(rgb[..., 2].astype(np.float32) - rgb[..., 0].astype(np.float32), 1.0 * ppm) > 15
     t_bot = float(np.nonzero(teeth_only.any(axis=1))[0].max()) if teeth_only.any() else by + 0.86 * bh
@@ -1034,26 +1101,189 @@ def make_sketch(upload: bytes, tile_width_mm: float, detail: float = 0.5, shadin
                     _stamp(cdr, pc[seg_], _profile(len(seg_), 1.9 * ppm, LW * ppm))
                 i_ = j_ + int(1.5 * ppm)
             chin_ln = np.asarray(cimg) > 0
-    # moustache: the darkest shape of the lower face. A solid core under the nose wings, then flow strokes at pitch 2.6 mm
-    # out and down from the philtrum to tapering points at the photo's corners, 2-3 thin white strands inside (FL 6)
-    if mous_sym.sum() > 100:
-        xm = np.nonzero(mous_sym)[1]
-        rw_ = max(1.0, float(np.abs(xm - xc).max()))
-        aa_ = np.clip(np.abs(xx_full(h, w) - xc) / rw_, 0, 1)
-        sg_ = np.where(xx_full(h, w) >= xc, 1.0, -1.0)
-        mfx = sg_ * (0.85 + 0.9 * aa_)
-        mfy = 0.60 - 0.10 * aa_
-        mn = np.hypot(mfx, mfy)
-        mfx, mfy = (mfx / mn).astype(np.float32), (mfy / mn).astype(np.float32)
-        msp = np.full((h, w), 2.6, np.float32)
-        mreg = mous_sym & ~nose_clear
-        if nostril_pts:
-            ny_m = float(np.mean([q[1] for q in nostril_pts]))
-            mc = _open(mous_sym & (L12 < face_med - 0.16) & (ys_ > ny_m + 3.0 * ppm) & (ys_ < ny_m + 13.0 * ppm) & ~nose_clear, 1.6 * ppm)
-            black |= mc
-            mreg = mreg & ~mc
-        flow_ink |= _flow_strokes(mreg, mfx, mfy, msp, ppm, rng, {2.6: (10, 18), 2.8: (10, 18), 3.4: (10, 18), 5.2: (10, 18)}, 1.6, seed_mm=1.1)
-        strands_white |= _flow_strands(mous_sym, mfx, mfy, ppm, rng, 3, (6.0, 10.0), 2.4, 1.1, sep_mm=7.0, curv=1.0 / 25.0, max_straight_mm=6.0)
+    # -------- mouth (red team mouth r1 #1-2): the teeth stay one white band. Its top edge is the moustache's solid
+    # fringe, its bottom edge one smile arc, and each end closes in a dark corner pocket (FG 5 Mouth, FL 9)
+    Lsur = _gauss(L, 2.5 * ppm)
+    Vg = (Lsur - _gauss(L, 0.5 * ppm)) / (Lsur + 0.15)    # crease strength relative to its own surround
+    mimg = Image.new("L", (w, h), 0)
+    mdr = ImageDraw.Draw(mimg)
+    corners = []
+    mouth_rows = None
+    mous_solid = np.zeros((h, w), bool)
+    mous_white = np.zeros((h, w), bool)
+    # teeth by colour: enamel is near neutral, lips, skin and a ginger moustache are all warm (R-B well above it)
+    dRB = _gauss(rgb[..., 0].astype(np.float32) - rgb[..., 2].astype(np.float32), 0.4 * ppm)
+    skin_rb = float(np.median(dRB[face_in])) if face_in.sum() > 100 else 60.0
+    mbox2 = np.zeros((h, w), bool)
+    mbox2[int(by + 0.64 * bh):int(by + 0.90 * bh), int(bx + 0.18 * bw):int(bx + 0.82 * bw)] = True
+    tm_ = _open(mbox2 & mask & (dRB < skin_rb - 16.0) & (L06 > 0.42), 0.4 * ppm)
+    tsel = np.zeros((h, w), bool)
+    if tm_.any():
+        lt_, _n = ndi.label(tm_)
+        for o, sl in enumerate(ndi.find_objects(lt_), start=1):
+            ww_, hh_ = sl[1].stop - sl[1].start, sl[0].stop - sl[0].start
+            if ww_ >= 0.12 * bw and ww_ >= 4.0 * hh_:
+                tsel |= lt_ == o
+    if tsel.any():
+        # grow into the shaded teeth at each end: looser colour, darker allowed, same rows
+        tr2 = np.nonzero(tsel.any(axis=1))[0]
+        loose = mbox2 & mask & (dRB < skin_rb - 10.0) & (L06 > 0.34) & (ys_ >= tr2.min() - 0.5 * ppm) & (ys_ <= tr2.max() + 0.5 * ppm)
+        tsel = ndi.binary_propagation(tsel, mask=_open(loose, 0.4 * ppm) | tsel)
+        tb_ = np.zeros((h, w), bool)
+        for c_ in np.nonzero(tsel.any(axis=0))[0]:
+            r_ = np.nonzero(tsel[:, c_])[0]
+            tb_[r_.min():r_.max() + 1, c_] = True
+        # a smile is near symmetric: neither end of the teeth runs more than 15% past the shorter side
+        tcs_ = np.nonzero(tb_.any(axis=0))[0]
+        hw_t = 1.15 * min(xc - tcs_.min(), tcs_.max() - xc)
+        if hw_t > 5 * ppm:
+            tb_[:, :int(xc - hw_t)] = False
+            tb_[:, int(xc + hw_t) + 1:] = False
+        teeth_only = _close(tb_, 1.0 * ppm) & mask
+        teeth = teeth_only.copy()
+    tcols = np.nonzero(teeth_only.any(axis=0))[0] if teeth_only.any() else np.array([], int)
+    if len(tcols) > 10 * ppm:
+        tcf = tcols.astype(float)
+        ttop = np.array([np.nonzero(teeth_only[:, c_])[0].min() for c_ in tcols], float)
+        tbm = np.array([np.nonzero(teeth_only[:, c_])[0].max() for c_ in tcols], float)
+        ttop = np.polyval(np.polyfit(tcf, ttop, 2), tcf)       # one arc, no wobble
+        # the teeth's lower edge is the crease where they meet the lower lip, not the end of the bright patch
+        # (the bright enamel ends there; the band grown into the lit lower lip does not count)
+        enamel = teeth
+        yb_raw = np.empty(len(tcols))
+        for i_, c_ in enumerate(tcols):
+            col_ = np.nonzero(enamel[int(ttop[i_]):int(tbm[i_]) + 1, c_])[0]
+            yb_raw[i_] = ttop[i_] + col_.max() + 0.3 * ppm if len(col_) else np.nan
+        okn = ~np.isnan(yb_raw)
+        if okn.sum() < 5:
+            yb_raw, okn = tbm.copy(), np.ones(len(tbm), bool)
+        yb_raw = np.where(okn, yb_raw, np.interp(tcf, tcf[okn], yb_raw[okn]))
+        cfb = np.polyfit(tcf, yb_raw, 2)
+        res_ = np.abs(yb_raw - np.polyval(cfb, tcf))
+        okb = res_ <= max(1.0 * ppm, float(np.percentile(res_, 70)))
+        tbot = np.polyval(np.polyfit(tcf[okb], yb_raw[okb], 2), tcf)
+        tbot = np.maximum(tbot, ttop + 2.2 * ppm)
+        for sgn, xe, yt, yb in ((-1.0, tcf[0], ttop[0], tbot[0]), (1.0, tcf[-1], ttop[-1], tbot[-1])):
+            ym = 0.5 * (yt + yb)
+            pth, stv = _valley_path(Vg, (xe, ym), (xe + sgn * 6.5 * ppm, ym - 3.0 * ppm), 2.0 * ppm, 1.0)
+            cx_, cy_ = xe + sgn * 4.0 * ppm, ym - 1.5 * ppm
+            if pth is not None:
+                okv = np.nonzero(stv > 0.045)[0]
+                if len(okv) and abs(pth[int(okv.max()), 0] - xe) >= 3.0 * ppm:
+                    cx_, cy_ = float(pth[int(okv.max()), 0]), float(pth[int(okv.max()), 1])
+            corners.append((cx_, cy_))
+        (clx, cly), (crx, cry) = corners
+        # top and bottom lips of the opening, each one curve from corner to corner
+        top_l = np.concatenate([[[clx, cly]], np.stack([tcf, ttop - 0.2 * ppm], 1), [[crx, cry]]])
+        bot_l = np.concatenate([[[clx, cly]], np.stack([tcf, tbot], 1), [[crx, cry]]])
+        top_l = _smooth_poly(_resample(top_l, 1.0)[0], int(2 * ppm))
+        bot_l = _smooth_poly(_resample(bot_l, 1.0)[0], int(3 * ppm))
+        # the opening is dark; the teeth are cut out of it afterwards, so only the corner pockets stay dark
+        mdr.polygon([tuple(map(float, q)) for q in np.concatenate([top_l, bot_l[::-1]])], fill=255)
+        rows_ = np.arange(h)[:, None]
+        tb_at = np.interp(np.arange(w), tcf, tbot)[None, :]
+        tt_at = np.interp(np.arange(w), tcf, ttop)[None, :]
+        tl_ = np.stack([tcf, ttop], 1)
+        bl_ = np.stack([tcf, tbot], 1)
+        ym0, ym1 = 0.5 * (ttop[0] + tbot[0]), 0.5 * (ttop[-1] + tbot[-1])
+        tpoly = np.concatenate([[[tcf[0] - 1.5 * ppm, ym0]], tl_, [[tcf[-1] + 1.5 * ppm, ym1]], bl_[::-1]])
+        timg = Image.new("L", (w, h), 0)
+        ImageDraw.Draw(timg).polygon([tuple(map(float, q)) for q in tpoly], fill=255)
+        teeth_only = (np.asarray(timg) > 0) & mask
+        # bare the teeth: shrink each end in by the pocket so a dark corner always shows
+        if teeth_only.any():
+            tc2 = np.nonzero(teeth_only.any(axis=0))[0]
+        # fringe: the moustache's shadow on the teeth, the darkest line of the face (2.6 mm, tapering into the corners)
+        _stamp(mdr, top_l - np.array([0, 1.3 * ppm]), _profile(len(top_l), 2.6 * ppm, LW * ppm, power=0.4))
+        # smile arc: the lower lip's edge, heaviest at the middle, up into each corner (FL 9 lip parting)
+        _stamp(mdr, bot_l + np.array([0, 0.9 * ppm]), _profile(len(bot_l), 1.8 * ppm, LW * ppm, power=0.6))
+        # shadow under the lower lip: the darkest crease 2.5-7 mm below the arc, middle half only
+        tw_ = tcf[-1] - tcf[0]
+        ylo = float(np.max(tbot))
+        best_ = None
+        for dy in np.arange(2.5, 7.5, 0.5):
+            pth, stv = _valley_path(Vg, (xc - 0.25 * tw_, ylo + dy * ppm), (xc + 0.25 * tw_, ylo + dy * ppm), 1.0 * ppm, 1.0)
+            if pth is not None and (best_ is None or stv.mean() > best_[1]):
+                best_ = (pth, float(stv.mean()))
+        if best_ is not None and best_[1] > 0.03:
+            pl_ = _smooth_poly(best_[0], int(3 * ppm))
+            _stamp(mdr, pl_, _profile(len(pl_), 2.0 * ppm, LW * ppm))
+        mouth_rows = (min(cly, cry), ylo)
+        if debug:
+            print("mouth", [round(v / ppm, 1) for v in (clx, cly, crx, cry, tcf[0], tcf[-1], ttop.min(), tbot.max(), xc)])
+        # moustache, from the photo: its own arched top under the nose, its ends drooping past the corners (FL 6)
+        ny_ = float(np.mean([q[1] for q in nostril_pts])) if nostril_pts else by + 0.58 * bh
+        fx_ = top_l[:, 0]
+        fy_ = top_l[:, 1]
+        cols_ = np.arange(w)
+        lim = np.where((cols_ >= clx) & (cols_ <= crx), np.interp(cols_, fx_, fy_),
+                       np.where(cols_ < clx, cly + 5.0 * ppm, cry + 5.0 * ppm))[None, :]
+        zone_m = mask & (rows_ > ny_ + 3.0 * ppm) & (rows_ <= lim) & (cols_[None, :] > clx - 8.0 * ppm) & (cols_[None, :] < crx + 8.0 * ppm)
+        dark_m = (L12 < face_med - 0.05) | (Tex > 0.045)
+        msol = _open(_close(zone_m & dark_m, 2.0 * ppm), 1.6 * ppm)
+        msol = _largest(msol) if msol.any() else msol
+        # down to the teeth with no gap: fill each column from the mass's top to the opening
+        for c_ in range(int(clx), int(crx) + 1):
+            col_ = np.nonzero(msol[:, c_])[0]
+            if len(col_):
+                msol[col_.min():int(np.interp(c_, fx_, fy_)), c_] = True
+        msol = _fill_small_holes(_close(msol, 1.5 * ppm), 40 * ppm * ppm) & mask & ~teeth_only
+        nos_ = np.zeros((h, w), bool)
+        for (cxo, cyo, _sg) in nostril_pts:
+            nos_ |= _disk((h, w), cxo, cyo, 2.6 * ppm)
+        msol &= ~ndi.binary_dilation(nos_, iterations=int(1.5 * ppm))   # nostrils keep their own shape
+        msol = _open(msol, 1.0 * ppm)
+        mous_solid = msol
+        if msol.any():
+            mtop = np.full(w, np.nan)
+            mcs = np.nonzero(msol.any(axis=0))[0]
+            for c_ in mcs:
+                mtop[c_] = np.nonzero(msol[:, c_])[0].min()
+            mtop = np.interp(cols_, mcs, mtop[mcs])
+            half_w = max(1.0, 0.5 * (crx - clx))
+            wimg = Image.new("L", (w, h), 0)
+            wdr = ImageDraw.Draw(wimg)
+            gapw = max(1.45, float(gap_mm)) * ppm
+            # white hairs fanning down and out from the philtrum, stopping short of every edge (FL 8)
+            for sgn in (-1.0, 1.0):
+                x0 = xc + sgn * 2.6 * ppm
+                while mcs.min() + 2 * ppm < x0 < mcs.max() - 2 * ppm:
+                    u = min(1.0, abs(x0 - xc) / half_w)
+                    y0 = float(mtop[int(x0)]) - 1.0 * ppm
+                    yend = float(np.interp(x0, fx_, fy_)) if clx <= x0 <= crx else float(lim[0, int(x0)])
+                    ymax = yend - 2.7 * ppm
+                    ang = math.radians(58.0 - 28.0 * u)
+                    ln_ = rng.uniform(3.2, 4.6) * ppm
+                    dx_, dy_ = sgn * math.cos(ang), math.sin(ang)
+                    if dy_ * ln_ > ymax - y0:
+                        ln_ = max(0.0, (ymax - y0) / dy_)
+                    if ln_ > 2.5 * ppm:
+                        t = np.linspace(0, 1, 30)[:, None]
+                        P0 = np.array([x0, y0]); P2 = P0 + ln_ * np.array([dx_, dy_])
+                        P1 = P0 + 0.5 * ln_ * np.array([dx_ * 0.7, dy_ * 1.1])
+                        cur = (1 - t) ** 2 * P0 + 2 * (1 - t) * t * P1 + t ** 2 * P2
+                        _stamp(wdr, cur, np.linspace(gapw * 1.25, gapw, 30))
+                    x0 += sgn * 3.3 * ppm
+            keep_bot = np.zeros((h, w), bool)
+            keep_bot[(rows_ > np.interp(np.arange(w), fx_, fy_)[None, :] - 2.7 * ppm)] = True
+            mous_white = (np.asarray(wimg) > 0) & ~keep_bot
+            cols2 = np.arange(w)[None, :]
+            msol_c = msol & (cols2 >= clx + 1.0 * ppm) & (cols2 <= crx - 1.0 * ppm)
+            mous_white &= msol_c
+            mdr.bitmap((0, 0), Image.fromarray((msol_c * 255).astype(np.uint8)), fill=255)
+            for sgn, cx_, cy_ in ((-1.0, clx, cly), (1.0, crx, cry)):
+                xa_ = cx_ - sgn * 6.0 * ppm
+                ya_ = float(mtop[int(np.clip(xa_, 0, w - 1))]) + 1.0 * ppm
+                col_m = np.nonzero(msol[:, int(np.clip(cx_ + sgn * 4.0 * ppm, 0, w - 1))])[0]
+                droop = float(col_m.max()) if len(col_m) else cy_ + 5.0 * ppm
+                droop = float(np.clip(droop, cy_ + 3.0 * ppm, cy_ + 8.0 * ppm))
+                P0 = np.array([xa_, ya_ + 1.5 * ppm]); P1 = np.array([cx_ + sgn * 2.5 * ppm, ya_ + 1.0 * ppm])
+                P2 = np.array([cx_ + sgn * 4.0 * ppm, droop])
+                t = np.linspace(0, 1, 40)[:, None]
+                lock = (1 - t) ** 2 * P0 + 2 * (1 - t) * t * P1 + t ** 2 * P2
+                _stamp(mdr, lock, np.linspace(4.2, LW, 40) * ppm)
+            mous_solid = msol_c
+    mouth_m = (np.asarray(mimg) > 0) & mask
     nostril = np.zeros((h, w), bool)
     # ears: bowl as a small solid dark shape (FG 5 Ear)
     ear_boxes = [(bx - 0.14 * bw, by + 0.32 * bh, bx + 0.03 * bw, by + 0.66 * bh),
@@ -1083,6 +1313,59 @@ def make_sketch(upload: bytes, tile_width_mm: float, detail: float = 0.5, shadin
                     ImageDraw.Draw(eimg).polygon([tuple(q) for q in ell], fill=255)
                     black |= (np.asarray(eimg) > 0) & mask
 
+    # cheek planes turning away (red team mouth r1 #3, #5; RE 5 "the lit edge of a round thing is darker than the middle
+    # of its light"): a band of hatch inside each side of the face, from under the eye to the mouth corner. The face
+    # edge is found per row as the strongest crease near the side of the face box (where the cheek meets the ear).
+    cheek_mid = np.zeros((h, w), bool)
+    cheek_dense = np.zeros((h, w), bool)
+    r0c = int((max(eye_rows) if eye_rows else by + 0.42 * bh) + 5.0 * ppm)
+    r1c = int(mouth_rows[0] + 4.0 * ppm) if mouth_rows else int(by + 0.80 * bh)
+    if r1c > r0c + 10 * ppm:
+        skin_c = mask & ~black & ~beard_reg & ~mous_sym & ~mous_solid & ~clear_f & ~teeth_only & ~hair_zone
+        rr_c = np.arange(r0c, r1c)
+        tt_c = (rr_c - r0c) / float(r1c - r0c)
+        taper = np.sin(np.pi * np.clip(tt_c * 1.15, 0, 1)) ** 0.5
+        for sd in (0, 1):
+            ca_, cb_ = (bx - 0.08 * bw, bx + 0.16 * bw) if sd == 0 else (bx + 0.80 * bw, bx + 1.06 * bw)
+            ca_, cb_ = int(max(0, ca_)), int(min(w - 1, cb_))
+            edge = ca_ + np.argmax(_gauss(Vg[r0c:r1c, ca_:cb_], 1.0 * ppm), axis=1).astype(np.float32)
+            edge = _gauss(edge, 4.0 * ppm)
+            # the face's own contour, in front of the ear (FG 13): drawn where the crease is real
+            ex_i = np.clip(edge.astype(int), 0, w - 1)
+            vv_ = Vg[rr_c, ex_i]
+            okc = _gauss((vv_ > 0.035).astype(np.float32), 2.0 * ppm) > 0.5
+            if okc.sum() > 8 * ppm:
+                idx_ = np.nonzero(okc)[0]
+                pe_ = np.stack([edge[idx_], rr_c[idx_].astype(float)], 1)
+                _stamp(fd, pe_, _profile(len(pe_), (1.9 if (sd == 0) == light_left else 1.6) * ppm, LW * ppm))
+            shade = (sd == 1) == light_left
+            wd_ = (8.0 if shade else 5.5) * ppm * taper
+            wdd = wd_
+            inward = 1.0 if sd == 0 else -1.0
+            cols_c = np.arange(w)[None, :]
+            dist_in = (cols_c - edge[:, None]) * inward
+            cheek_mid[r0c:r1c] |= (dist_in > 0.5 * ppm) & (dist_in < wd_[:, None])
+            cheek_dense[r0c:r1c] |= (dist_in > 0.5 * ppm) & (dist_in < wdd[:, None])
+        # where the photo itself is darker than the face's middle value (FP 3, values from the subject)
+        L3c = _up_f(_nblur(Ll, mlo, 2.0 * ppl), f, h, w)
+        shade_half_c = (xs > xc) if light_left else (xs < xc)
+        rows_c = (ys_ >= r0c) & (ys_ < r1c)
+        sk_v = L3c[skin_c & rows_c & (np.abs(xs - xc) < 0.40 * bw)]
+        skin_med = float(np.median(sk_v)) if sk_v.size > 100 else face_med
+        darker = np.where(shade_half_c, L3c < skin_med - 0.04, L3c < skin_med - 0.08)
+        if debug:
+            print("cheek skin_med", round(skin_med, 3), "face_med", round(face_med, 3))
+        band_c = cheek_mid.copy()
+        cheek_mid = ((rows_c & darker) & skin_c) | (band_c & skin_c)
+        cheek_mid = _open(cheek_mid, 2.0 * ppm)
+        lbc, nbc_ = ndi.label(cheek_mid)
+        if nbc_:
+            szc = ndi.sum(cheek_mid, lbc, index=np.arange(1, nbc_ + 1))
+            okc_ = np.zeros(nbc_ + 1, bool)
+            okc_[1:] = szc >= 40 * ppm * ppm
+            cheek_mid = okc_[lbc]
+        cheek_dense &= skin_c & cheek_mid
+        cheek_dense = _open(cheek_dense, 1.5 * ppm)
     # shade-side band: one open-middle band of hatch on the side away from the light (FG 12; red team r1 #3)
     L3s = _up_f(_nblur(Ll, mlo, 3.0 * ppl), f, h, w)
     shade_half = (xs > bx + 0.5 * bw) if light_left else (xs < bx + 0.5 * bw)
@@ -1117,6 +1400,8 @@ def make_sketch(upload: bytes, tile_width_mm: float, detail: float = 0.5, shadin
                 bad[1:] = szp < amin * ppm * ppm
                 lvl[bad[lp]] = 0
         lvl[shade_band & (lvl < 2)] = 2
+        lvl[cheek_mid & (lvl < 2)] = 2
+        lvl[cheek_dense] = 3
         lvl[mass_hatch] = 3
         lvl[teeth_only] = 0
         lvl[black] = 3
@@ -1221,8 +1506,6 @@ def make_sketch(upload: bytes, tile_width_mm: float, detail: float = 0.5, shadin
             max(inside, key=lambda l: l["g"] * l["len"])["role"] = "ear"
     mb = (bx + 0.25 * bw, by + 0.68 * bh, bx + 0.75 * bw, by + 0.85 * bh)
     mouths = [l for l in lines if in_box(l["c"], mb) and horiz(l, 25) and l["len"] >= 0.12 * fwmm and l.get("role") is None]
-    if mouths:
-        max(mouths, key=lambda l: l["g"] * l["len"])["role"] = "lip"
     thr_shift = (0.5 - detail) * 0.3
     zone_thr = {0: 0.80, 1: 0.66, 2: 0.56, 3: 0.76}
     kept = []
@@ -1272,33 +1555,130 @@ def make_sketch(upload: bytes, tile_width_mm: float, detail: float = 0.5, shadin
             base = LW + 0.25 * l["rank"] + (0.15 if in_box(l["c"], coi) else 0.0)
             wd = np.full(n, base * ppm)
         _stamp(ld, p, wd)
-    if teeth_only.any():
-        cols = np.nonzero(teeth_only.any(axis=0))[0]
-        if len(cols) > 10:
-            bot = np.array([np.nonzero(teeth_only[:, c_])[0].max() for c_ in cols], float) + 0.5 * ppm
-            lipp = _smooth_poly(np.stack([cols.astype(float), bot], 1), int(2.5 * ppm))
-            pp, _ = _resample(lipp, 1.0)
-            _stamp(ld, pp, _profile(len(pp), 2.5 * ppm, LW * ppm))
-    # two nasolabial folds, each found as the darkest ridge in a corridor from the nose wing to the mouth corner
-    L12s = L12
-    if len(nostril_pts) == 2 and mous.any():
-        ycs, xcs = np.nonzero(mous)
+    # -------- creases traced from the photo itself: smile folds, the squint under each eye, crow's feet, the nose's
+    # underside, the ear hollows (red team mouth r1 #3-5; FP 6, FL 9 "one decisive line", RE 7 detail in the half light)
+    from skimage.morphology import skeletonize
+    feat_pre = (np.asarray(fdraw) > 0) | mouth_m
+    vreg = mask & (ndi.distance_transform_edt(mask) > 2.5 * ppm) & ~black & ~beard_reg & ~teeth_only & ~clear_core
+    vreg &= ~ndi.binary_dilation(mous_sym | feat_pre, iterations=int(1.5 * ppm))
+    top_r = (min(eye_rows) - 3.0 * ppm) if eye_rows else by + 0.35 * bh
+    vreg &= (ys_ > top_r) & (ys_ < by + 1.02 * bh) & (xs > bx - 0.18 * bw) & (xs < bx + 1.18 * bw)
+    if dark_hair:
+        vreg &= ~ndi.binary_dilation(hair_black, iterations=int(1.0 * ppm))
+    vm = _open((Vg > VTHR) & vreg, 0.2 * ppm)
+    dbg_v = (vreg, vm)
+    lb_, nv_ = ndi.label(vm)
+    if nv_:
+        szv = ndi.sum(vm, lb_, index=np.arange(1, nv_ + 1))
+        okv = np.zeros(nv_ + 1, bool)
+        okv[1:] = szv >= 4.0 * ppm * ppm
+        vm = okv[lb_]
+    vchains = []
+    for ch_ in _walk_chains(skeletonize(vm), int(4.0 * ppm)):
+        sm = _smooth_poly(ch_, int(1.5 * ppm))
+        ln_ = float(np.hypot(*np.diff(sm, axis=0).T).sum()) / ppm
+        if ln_ < 5.0:
+            continue
+        iy = np.clip(sm[:, 1].astype(int), 0, h - 1)
+        ix = np.clip(sm[:, 0].astype(int), 0, w - 1)
+        vchains.append((float(Vg[iy, ix].mean()) * min(ln_, 25.0), sm, float(Vg[iy, ix].mean())))
+    vchains.sort(key=lambda q: -q[0])
+    for _, sm, v_ in vchains[:28]:
+        wm = float(np.clip(LW + (v_ - VTHR) / 0.08 * 0.8, LW, 2.4))
+        _stamp(fd, sm, _profile(len(sm), wm * ppm, LW * ppm))
+    # smile folds: the darkest crease from each nose wing out and down to the moustache's outer top corner (FG 5)
+    if len(nostril_pts) == 2 and mous_solid.any():
+        mys, mxs = np.nonzero(mous_solid)
         for (nx, ny, sg) in nostril_pts:
-            ci = int(np.argmin(xcs)) if sg < 0 else int(np.argmax(xcs))
-            ex, ey = xcs[ci] + sg * 1.5 * ppm, float(ycs[ci])
-            sx, sy = nx + sg * 6.5 * ppm, ny + 0.5 * ppm
-            if ey - sy < 8 * ppm:
+            ci = int(np.argmin(mxs)) if sg < 0 else int(np.argmax(mxs))
+            ex_ = float(mxs[ci])
+            ey_ = float(mys[mxs == mxs[ci]].min())
+            p0_ = (nx + sg * 7.0 * ppm, ny - 3.0 * ppm)
+            p1_ = (ex_ - sg * 1.0 * ppm, ey_)
+            pth, stv = _valley_path(Vg, p0_, p1_, 4.0 * ppm, 1.0)
+            if pth is not None and float(stv.mean()) > 0.025:
+                pth = _smooth_poly(pth, int(4 * ppm))
+                dm_ = ndi.distance_transform_edt(~mous_solid)
+                okf = dm_[np.clip(pth[:, 1].astype(int), 0, h - 1), np.clip(pth[:, 0].astype(int), 0, w - 1)] > 2.6 * ppm
+                cutf = np.nonzero(~okf)[0]
+                pth = pth[:cutf.min()] if len(cutf) else pth
+            if pth is not None and len(pth) > 5 * ppm and float(stv.mean()) > 0.025:
+                _stamp(fd, pth, _profile(len(pth), 2.2 * ppm, LW * ppm, power=0.7))
+    # cheek apples (red team mouth r2 #4; RE 3 one light, RE 5 gradation): round lit forms. Their highlight stays bare;
+    # 2-3 curved shade lines wrap the outer-lower quarter, more on the side away from the light
+    occ = ndi.binary_dilation((np.asarray(fdraw) > 0) | mouth_m | mous_solid | black | beard_reg, iterations=int(1.6 * ppm))
+    capp = Image.new("L", (w, h), 0)
+    cad = ImageDraw.Draw(capp)
+    if eye_rows and nostril_pts:
+        ra_ = int(max(eye_rows) + 6.0 * ppm)
+        rb_ = int(np.mean([q[1] for q in nostril_pts]))
+        Lap = _gauss(L, 3.0 * ppm)
+        for sd in (0, 1):
+            ca_, cb_ = (int(bx + 0.06 * bw), int(xc - 0.14 * bw)) if sd == 0 else (int(xc + 0.14 * bw), int(bx + 0.94 * bw))
+            if rb_ <= ra_ + 2 or cb_ <= ca_ + 2:
                 continue
-            yp = np.arange(int(sy), int(ey))
-            xl = sx + (ex - sx) * (yp - sy) / (ey - sy)
-            xp = []
-            for yv, xv in zip(yp, xl):
-                a_, b_ = int(max(0, xv - 3 * ppm)), int(min(w - 1, xv + 3 * ppm))
-                xp.append(a_ + int(np.argmin(L12s[yv, a_:b_ + 1])) if b_ > a_ else xv)
-            path = _smooth_poly(np.stack([_gauss(np.array(xp, float), 2 * ppm), yp.astype(float)], 1), int(7 * ppm))
-            ix_ = np.clip(path[:, 0].astype(int), 0, w - 1)
-            if float(L12s[yp, ix_].mean()) < face_med - 0.03:
-                _stamp(fd, path, _profile(len(path), 2.0 * ppm, LW * ppm))
+            sub_ = np.where(mask[ra_:rb_, ca_:cb_], Lap[ra_:rb_, ca_:cb_], -1.0)
+            ay_, ax_ = np.unravel_index(int(np.argmax(sub_)), sub_.shape)
+            acx, acy = ca_ + ax_, ra_ + ay_
+            sgn = -1.0 if sd == 0 else 1.0
+            shade = (sd == 1) == light_left
+            radii = ()
+            for rf in radii:
+                r_ = rf * bw
+                th = np.linspace(math.radians(15), math.radians(80), 40)
+                pts = np.stack([acx + sgn * r_ * np.cos(th), acy + r_ * np.sin(th)], 1)
+                ix_ = np.clip(pts[:, 0].astype(int), 0, w - 1)
+                iy_ = np.clip(pts[:, 1].astype(int), 0, h - 1)
+                ok_ = mask[iy_, ix_] & ~occ[iy_, ix_] & (ndi.distance_transform_edt(mask)[iy_, ix_] > 3.0 * ppm)
+                # draw the longest clear run only
+                runs, cur = [], []
+                for k_, o_ in enumerate(ok_):
+                    if o_:
+                        cur.append(k_)
+                    elif cur:
+                        runs.append(cur); cur = []
+                if cur:
+                    runs.append(cur)
+                if runs:
+                    rn = max(runs, key=len)
+                    seg = pts[rn]
+                    if len(seg) > 2 and float(np.hypot(*np.diff(seg, axis=0).T).sum()) > 6.0 * ppm:
+                        _stamp(cad, seg, _profile(len(seg), 1.8 * ppm, LW * ppm))
+    apple_m = (np.asarray(capp) > 0) & mask
+    # the squint: a crease under each eye and two crow's feet at its outer corner, each traced from the photo (FG 5)
+    for (x0e_, x1e_, er_, sd_) in eye_info:
+        ew_ = x1e_ - x0e_
+        outer = x0e_ if sd_ == 0 else x1e_
+        osg = -1.0 if sd_ == 0 else 1.0
+        inner_x = x1e_ - 0.30 * ew_ if sd_ == 0 else x0e_ + 0.30 * ew_
+        best_ = None
+        for dy in np.arange(4.5, 9.0, 0.5):
+            pth, stv = _valley_path(Vg, (inner_x, er_ + dy * ppm), (outer + osg * 1.0 * ppm, er_ + (dy - 2.0) * ppm), 1.0 * ppm, 1.0)
+            if pth is not None and (best_ is None or stv.mean() > best_[1]):
+                best_ = (pth, float(stv.mean()))
+        if best_ is not None and best_[1] > 0.04:
+            pc_ = _smooth_poly(best_[0], int(2 * ppm))
+            _stamp(fd, pc_, _profile(len(pc_), 1.7 * ppm, LW * ppm))
+        for a_deg in (-18.0, 14.0):
+            a_ = math.radians(a_deg)
+            st_ = (outer + osg * 2.5 * ppm, er_ - 0.5 * ppm)
+            en_ = (st_[0] + osg * 8.0 * ppm * math.cos(a_), st_[1] + 8.0 * ppm * math.sin(a_))
+            pth, stv = _valley_path(Vg, st_, en_, 1.2 * ppm, 1.0)
+            if pth is not None and float(stv.mean()) > 0.045:
+                pc_ = _smooth_poly(pth, int(1.5 * ppm))
+                _stamp(fd, pc_, np.linspace(1.8, LW, len(pc_)) * ppm)
+    # nose underside: the tip's lower contour between the nostrils (FG 5 "deeper and broader at the end")
+    if len(nostril_pts) == 2 and nose_tip is not None:
+        (xl_, yl_, _), (xr_, yr_, _) = sorted(nostril_pts)
+        best_ = None
+        for dy in np.arange(-1.0, 3.5, 0.5):
+            yy0 = 0.5 * (yl_ + yr_) + dy * ppm
+            pth, stv = _valley_path(Vg, (xl_ + 2.5 * ppm, yy0), (xr_ - 2.5 * ppm, yy0), 1.5 * ppm, 1.0)
+            if pth is not None and (best_ is None or stv.mean() > best_[1]):
+                best_ = (pth, float(stv.mean()))
+        if best_ is not None and best_[1] > 0.03 and (mouth_rows is None or not mous_solid.any()):
+            pc_ = _smooth_poly(best_[0], int(2.5 * ppm))
+            _stamp(fd, pc_, _profile(len(pc_), 1.9 * ppm, LW * ppm))
     feat_m = (np.asarray(fdraw) > 0) & mask
     lines_m = ((np.asarray(line_img) > 0) & mask & keep) | feat_m
 
@@ -1307,8 +1687,8 @@ def make_sketch(upload: bytes, tile_width_mm: float, detail: float = 0.5, shadin
     outline_m &= keep
 
     # -------- composite and finish (FP step 11)
-    ink = hatch | lines_m | outline_m | black | flow_ink | chin_ln
-    white = catch | strands_white | teeth_only
+    ink = hatch | lines_m | outline_m | black | flow_ink | chin_ln | mouth_m | apple_m
+    white = catch | strands_white | teeth_only | mous_white
     ink &= ~white
     ink |= extra_black & mask
     r = FLOOR / 2.0 * ppm
@@ -1317,7 +1697,7 @@ def make_sketch(upload: bytes, tile_width_mm: float, detail: float = 0.5, shadin
     ink = _close(ink, rg)
     ink = _open(ink, r)
     # orphan fragments: small pieces away from every drawn feature are deleted (red team r1 #9)
-    prot = ndi.distance_transform_edt(~(feat_m | catch | teeth_only | flow_ink | chin_ln)) <= 3.0 * ppm
+    prot = ndi.distance_transform_edt(~(feat_m | catch | teeth_only | flow_ink | chin_ln | mouth_m | apple_m | cheek_mid)) <= 3.0 * ppm
     lab_i, ni = ndi.label(ink)
     if ni:
         objs = ndi.find_objects(lab_i)
@@ -1348,7 +1728,7 @@ def make_sketch(upload: bytes, tile_width_mm: float, detail: float = 0.5, shadin
         rep["min_line_mm"], rep["min_gap_mm"] = measure_floor(ink, zone, ppm)
     if debug:
         layers = {"hatch": hatch, "lines": lines_m, "outline": outline_m, "black": black, "mask": mask,
-                  "white": white, "lvl": lvl, "feat": feat_m, "solid": solid_mass, "dbg": {"eye_cx": eye_cx, "nostrils": nostril_pts}, "teeth": teeth_only, "beard": beard_only, "core": core, "mous": mous, "mhatch": mous_hatch, "beard_reg": beard_reg, "flow": flow_ink, "ribbon": ribbon, "face_med": face_med}
+                  "white": white, "lvl": lvl, "feat": feat_m, "solid": solid_mass, "dbg": {"eye_cx": eye_cx, "nostrils": nostril_pts, "tip": nose_tip}, "teeth": teeth_only, "beard": beard_only, "core": core, "mous": mous, "mhatch": mous_hatch, "beard_reg": beard_reg, "flow": flow_ink, "ribbon": ribbon, "face_med": face_med, "vreg": dbg_v[0], "vm": dbg_v[1], "mouth": mouth_m, "hairb": black, "cheek": cheek_mid, "hatch_raw": hatch}
     return Sketch(mask=ink, report=rep, crop_rgb=rgb, face_box=face_box, ppm=float(ppm), layers=layers)
 
 

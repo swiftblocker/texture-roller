@@ -260,7 +260,7 @@ input[type="checkbox"] { accent-color: var(--color-accent); width: 16px; height:
   }
   .bar-export { display: block; flex: none; }
   .bar-export .btn { min-width: 96px; height: 44px; white-space: nowrap; }
-  .bar-export .btn:disabled { color: var(--color-block); border-color: var(--color-block); background: var(--color-block-bg); border-style: solid; }
+  .bar-export .btn.is-blocked { color: var(--color-block); border-color: var(--color-block); background: var(--color-block-bg); border-style: solid; }
   .busy { min-width: 0; }
   .engine-note { display: none; }
 
@@ -370,4 +370,17 @@ input[type="checkbox"] { accent-color: var(--color-accent); width: 16px; height:
   .slab-wrap.multi { height: clamp(560px, 110svh, 1100px); }
   .view3d { height: clamp(320px, 50svh, 480px); }
   .row { grid-template-columns: minmax(0, 1fr) 148px; }
+}
+
+/* Upload first, STL last: the two actions most people need, made the most visible. */
+.btn.btn-upload { background: var(--color-ink); color: var(--color-paper); border-color: var(--color-ink); font-weight: 600; padding: 0 20px; }
+.btn.btn-upload:hover { background: var(--color-ink-2); border-color: var(--color-ink-2); }
+.btn.btn-stl { height: 52px; font-size: var(--step-1, 1.125rem); font-weight: 600; padding: 0 24px; }
+.export-result a.primary { background: var(--color-accent); color: var(--color-accent-ink); border: 1px solid var(--color-accent); border-radius: var(--radius); text-decoration: none; display: flex; align-items: center; justify-content: center; min-height: 52px; font-size: var(--step-1, 1.125rem); font-weight: 600; margin-bottom: 8px; }
+.export-other { margin: 8px 0 4px; }
+.export-other a { margin-right: 12px; }
+.slab-wrap.drop { outline: 3px solid var(--color-accent); outline-offset: -3px; }
+@media (max-width: 1023px) {
+  .toolbar #upload-art { min-height: 52px; font-size: var(--step-1, 1.125rem); }
+  .bar-export .btn.btn-stl { height: 44px; font-size: var(--step-0, 1rem); padding: 0 14px; }
 }

@@ -350,7 +350,7 @@ function busy(on) {
 async function requestPreview() {
   if (document.querySelector("input.invalid")) return;
   const file = S.params.art_source === "upload" ? S.upload : null;
-  if (S.params.art_source === "upload" && !file) { showEmpty("Choose an SVG, PNG or JPEG to preview.", false); return; }
+  if (S.params.art_source === "upload" && !file) { showEmpty("Upload a picture, or drag one onto this area. SVG, PNG or JPEG.", false); return; }
   const mine = ++S.seq;
   busy(true);
   try {
@@ -443,9 +443,10 @@ function renderRules() {
 function exportLabel() {
   const b = $("export");
   const blocked = S.last && S.blockers && S.blockers.length > 0;
+  b.classList.toggle("is-blocked", !!blocked);
   b.textContent = MQ_NARROW.matches && blocked
     ? "Blocked " + S.blockers.slice(0, 2).join(", ") + (S.blockers.length > 2 ? " +" + (S.blockers.length - 2) : "")
-    : "Export";
+    : "Download STL";
 }
 
 /* ---------- narrow layout: export button placement, collapsible sections ---------- */
@@ -596,7 +597,7 @@ function drawSlab() {
   ctx.textBaseline = "bottom";
   ctx.fillText(mm + " mm " + (S.fired ? "fired" : "wet"), bx + bw + 8, by + 4);
   const revs = (W / (revW)).toFixed(1);
-  $("slab-caption").textContent = (S.fired ? "Fired" : "Wet") + " size, " + fmt(C * shrink, 1) + " mm per revolution, " + revs + " revolutions across";
+  $("slab-caption").textContent = (S.fired ? "Fired" : "Wet") + " size, " + fmt(C * shrink, 1) + " mm per revolution, " + revs + " revolutions across" + (String(S.params.art_source).startsWith("pattern:") ? ". This is a sample pattern; upload a picture to make your own." : "");
 }
 
 function setSize(fired) {
@@ -726,7 +727,7 @@ function dlLink(href, name, text, primary) {
 }
 async function doExport(kind) {
   const res = $("export-result");
-  res.replaceChildren(el("span", { text: "Exporting. The browser stays usable." }));
+  res.replaceChildren(el("span", { text: "Building the STL. This takes a few seconds; the page stays usable." }));
   $("export").disabled = true; $("strip-btn").disabled = true;
   if (MQ_NARROW.matches) document.querySelector(".export").scrollIntoView({ block: "start" });
   try {
@@ -737,17 +738,20 @@ async function doExport(kind) {
       const ids = (j.rules || []).filter((x) => x.action === "BLOCK").map((x) => x.id);
       res.append(el("span", { class: "err", text: "Not exported. Blocked by " + (ids.join(", ") || "a rule") + "." }));
     } else {
-      const nFiles = (j.files || []).length;
-      const zipText = (kind === "strip" ? "Download test strip zip" : "Download zip") + " (" + nFiles + " files" + (j.zipBytes ? ", " + mb(j.zipBytes) : "") + ")";
-      if (engine.lowMemory && j.href3mf) {
-        res.append(dlLink(j.href3mf, j.filename3mf, "Download 3MF (" + mb(j.bytes3mf) + ")", true));
-        res.append(dlLink(j.href, j.filename, zipText, false));
-      } else {
-        res.append(dlLink(j.href, j.filename, zipText, false));
+      const stls = j.stls || [];
+      const halves = stls.length > 1;
+      for (const f of stls) {
+        const part = halves ? (/_a\.stl$/i.test(f.filename) ? " (bottom half)" : " (top half)") : "";
+        res.append(dlLink(f.href, f.filename, "Save STL" + part + ", " + mb(f.bytes), true));
       }
-      const ul = el("ul");
-      for (const f of j.files || []) ul.append(el("li", { text: f }));
-      res.append(ul);
+      /* Start the first STL download right away; the links stay for a second try. */
+      if (stls.length) res.querySelector("a.primary").click();
+      const other = el("p", { class: "export-other", text: "Other files:" });
+      if (j.href3mf) other.append(" ", dlLink(j.href3mf, j.filename3mf, "3MF (" + mb(j.bytes3mf) + ")", false));
+      other.append(" ", dlLink(j.href, j.filename, "everything as a zip (" + (j.files || []).length + " files, " + mb(j.zipBytes || 0) + ")", false));
+      if (!stls.length) other.firstChild.textContent = "Files:";
+      res.append(other);
+      res.append(el("p", { class: "caption", text: "The zip adds the heightmap for CNC, a slab picture and a print sheet with settings and how to use the roller." }));
     }
   } catch (e) {
     res.replaceChildren(el("span", { class: "err", text: "Export failed: " + e.message }));
@@ -794,7 +798,7 @@ $("glaze-pool").onchange = (e) => { S.glaze = e.target.checked; imageCache = nul
 const uploadBtn = $("upload-art");
 const syncUploadBtn = () => {
   const f = S.params.art_source === "upload" && S.upload;
-  uploadBtn.textContent = f ? "Change picture" : "Upload picture";
+  uploadBtn.textContent = f ? "Change picture" : "Upload a picture";
   uploadBtn.title = f ? S.upload.name : "SVG, PNG or JPEG. PNG and JPEG are traced to black and white.";
 };
 uploadBtn.onclick = () => {
@@ -804,6 +808,20 @@ uploadBtn.onclick = () => {
   file.click();
 };
 $("f-file").addEventListener("change", syncUploadBtn);
+/* Drag a picture onto the slab to use it. */
+const slabWrap = $("slab-wrap");
+const ARTISH = /\.(png|jpe?g|svg)$/i;
+slabWrap.addEventListener("dragover", (e) => { e.preventDefault(); slabWrap.classList.add("drop"); });
+slabWrap.addEventListener("dragleave", () => slabWrap.classList.remove("drop"));
+slabWrap.addEventListener("drop", (e) => {
+  e.preventDefault(); slabWrap.classList.remove("drop");
+  const f = [...(e.dataTransfer?.files || [])].find((x) => ARTISH.test(x.name) || /^image\//.test(x.type));
+  if (!f) return;
+  const sel = $("f-art"), file = $("f-file");
+  if (sel.value !== "upload") { sel.value = "upload"; sel.dispatchEvent(new Event("change")); }
+  const dt = new DataTransfer(); dt.items.add(f); file.files = dt.files;
+  file.dispatchEvent(new Event("change"));
+});
 $("f-art").addEventListener("change", syncUploadBtn);
 $("random-start").onclick = () => {
   if (!S.last) return;

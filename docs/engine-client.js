@@ -165,10 +165,13 @@ async function pyodideEngine(onProgress) {
 
   let blobUrl = null;
   let blobUrl3 = null;
+  let stlUrls = [];
   const asDownload = (m, prefix) => {
     const j = JSON.parse(m.json);
     if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
     if (blobUrl3) { URL.revokeObjectURL(blobUrl3); blobUrl3 = null; }
+    for (const u of stlUrls) URL.revokeObjectURL(u);
+    stlUrls = [];
     if (m.zip && !j.blocked) blobUrl = URL.createObjectURL(new Blob([m.zip], { type: "application/zip" }));
     if (m.m3 && !j.blocked) blobUrl3 = URL.createObjectURL(new Blob([m.m3], { type: "model/3mf" }));
     const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
@@ -176,6 +179,11 @@ async function pyodideEngine(onProgress) {
       ...j, href: blobUrl, filename: prefix + "-" + stamp + ".zip",
       href3mf: blobUrl3, filename3mf: prefix + "-" + stamp + ".3mf",
       zipBytes: m.zip ? m.zip.length : 0, bytes3mf: m.m3 ? m.m3.length : 0,
+      stls: j.blocked ? [] : (m.stls || []).map((f) => {
+        const href = URL.createObjectURL(new Blob([f.data], { type: "model/stl" }));
+        stlUrls.push(href);
+        return { href, bytes: f.data.length, filename: prefix + "-" + stamp + (f.name.match(/_[ab]\.stl$/i) ? f.name.slice(-6) : ".stl") };
+      }),
     };
   };
 

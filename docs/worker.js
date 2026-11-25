@@ -49,17 +49,21 @@ from engine import api
 
 _zip = None
 _m3 = None
+_stls = []
 
 def _pick3mf(z):
-    global _m3
+    global _m3, _stls
     _m3 = b""
+    _stls = []
     if not z:
         return
     zf = zipfile.ZipFile(io.BytesIO(z))
     for n in zf.namelist():
-        if n.lower().endswith(".3mf"):
+        low = n.lower()
+        if low.endswith(".3mf") and not _m3:
             _m3 = zf.read(n)
-            return
+        elif low.endswith(".stl"):
+            _stls.append([os.path.basename(n), zf.read(n)])
 
 def _dumps(o):
     return json.dumps(o, default=lambda x: x.item() if hasattr(x, "item") else str(x))
@@ -170,7 +174,7 @@ self.onmessage = (ev) => {
   if (!py) { post({ type: "result", id: m.id, ok: false, error: "engine not ready" }); return; }
   try {
     const json = run(m);
-    let zip = null, m3 = null;
+    let zip = null, m3 = null, stls = [];
     if (m.op === "export" || m.op === "test_strip") {
       const proxy = py.globals.get("_zip");
       if (proxy && proxy.toJs) {
@@ -184,11 +188,17 @@ self.onmessage = (ev) => {
         if (b.length) m3 = new Uint8Array(b);
         p3.destroy();
       }
+      const ps = py.globals.get("_stls");
+      if (ps && ps.toJs) {
+        for (const [name, data] of ps.toJs()) stls.push({ name: String(name), data: new Uint8Array(data) });
+        ps.destroy();
+      }
     }
     const tr = [];
     if (zip) tr.push(zip.buffer);
     if (m3) tr.push(m3.buffer);
-    post({ type: "result", id: m.id, ok: true, json, zip, m3 }, tr);
+    for (const f of stls) tr.push(f.data.buffer);
+    post({ type: "result", id: m.id, ok: true, json, zip, m3, stls }, tr);
   } catch (e) {
     post({ type: "result", id: m.id, ok: false, error: String(e && e.message ? e.message : e).split("\n").slice(-3).join(" ") });
   }

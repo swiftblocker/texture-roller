@@ -72,3 +72,17 @@ Feature 6/10 (from 4), skill 4/10 (from 3). Squint 0.738 -> 0.743. Reports: redt
 - relief._widths now joins pieces across the seam before measuring (a letter on the seam read as two thin halves: false R19b/R26).
 - Service worker: same-origin files are revalidated (cache: no-cache) so a deploy never mixes an old app.js with a new engine; cache name roller-v2.
 
+
+## 2026-11-25 Group photo spike (owner: "the previous one is way better, just use that")
+- Owner chose the merged block-print cutout (local prototype app/out/sketch/combo_group.py): grabCut people mask from face boxes, dark masses solid, plaid as a windowpane, feature-scale face marks, small faces (< 30 mm) by the tone-face renderer, highlight knock-outs in big solids, forced 1.9 mm gap carve outside faces.
+- Rejected: v2 line-art rebuild (group_v2.py) after the red team; cleaner and kept children readable, but the owner judged the likeness worse.
+- Exported from it: 65.4 mm diameter x 250 mm, 1 x 1 repeat, depth 1.2 mm, draft 10 deg; engine passes (only R64 mesh size WARN, 2.58 M triangles).
+- Not a product feature yet: needs face marking (the detector missed the baby), a browser-side people mask (cv2 is not in the Pyodide engine), and the red-team engineering items (rt_engineering.md: lenient self-measure, hard-coded photo, about 98 full-image distance transforms).
+
+## 2026-11-25 Group photo mode on the website (owner: "use the open cv method for processing any photo", "deploy it")
+- New art style "Group photo" (engine/group.py): OpenCV Haar faces (frontal alt2 + default + profile both ways, skin and size filters, profile boxes moved onto the face, boxes shrunk 8 %), grabCut people mask seeded from the faces (seeded RNG, so the same photo gives the same art), the block-print cutout the owner approved, faces under 0.8 x the largest (or 30 mm) by the tone renderer.
+- Faces get only the light clay pass; the full pass fattened eyes and lips and closed the teeth band.
+- Eyes (owner: "fix the woman's eyes"; two red-team rounds, rt_eyes.md, local): redrawn only where an eye was lost to hair or shadow. Smiling crescent lid, iris tucked under it, low short brow; a half-hidden eye is placed by spacing (0.45 x face width, tilt cap 11 deg).
+- Nose (owner: "nostrils are huge", "dainty and thin", "yours is too high"): nostril dots and shadow bars replaced by one 1.3 mm hook down the shadow side, turning under the tip. Its foot sits on the bottom of the nostril shadow measured in the photo, lifted only for a 1.5 mm clay gap. Measured on the test photo: nose bottom within 0.2 mm of the photo.
+- Browser: Pyodide loads opencv-python (11 MB) only the first time a group photo is used. The cascade files ship in engine/data/cascades (OpenCV licence).
+- Deployed without an in-browser test of group mode (owner's choice); engine tests use public sample images only. The owner's family photo and everything made from it stay in app/out (not in git).

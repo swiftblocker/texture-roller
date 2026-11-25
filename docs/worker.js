@@ -173,10 +173,25 @@ function run(m) {
   }
 }
 
-self.onmessage = (ev) => {
+/* Group photos need OpenCV (face finder, people cut-out). It is 11 MB, so it loads only the
+ * first time a group request arrives; the service worker keeps it after that. */
+let cvReady = false;
+async function ensureCv(m) {
+  if (cvReady || !m.params) return;
+  let p = null;
+  try { p = JSON.parse(m.params); } catch (e) { return; }
+  if (!p || p.art_style !== "group") return;
+  progress("Loading the face finder (11 MB, first time only)");
+  await py.loadPackage("opencv-python", { messageCallback: () => {}, errorCallback: () => {} });
+  cvReady = true;
+  progress("Face finder ready");
+}
+
+self.onmessage = async (ev) => {
   const m = ev.data;
   if (!py) { post({ type: "result", id: m.id, ok: false, error: "engine not ready" }); return; }
   try {
+    await ensureCv(m);
     const json = run(m);
     let zip = null, m3 = null, stls = [];
     if (m.op === "export" || m.op === "test_strip") {

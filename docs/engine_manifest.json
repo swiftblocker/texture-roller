@@ -1,10 +1,14 @@
 {
-  "version": "6df1a69d2122",
+  "version": "0ff8c6b983d7",
   "files": [
     "engine/__init__.py",
     "engine/api.py",
     "engine/art.py",
     "engine/body.py",
+    "engine/data/cascades/haarcascade_frontalface_alt2.xml",
+    "engine/data/cascades/haarcascade_frontalface_default.xml",
+    "engine/data/cascades/haarcascade_profileface.xml",
+    "engine/data/cascades/LICENSE.txt",
     "engine/data/checks.json",
     "engine/data/fonts/bebas-OFL.txt",
     "engine/data/fonts/bebas.ttf",
@@ -26,6 +30,7 @@
     "engine/data/fonts/shrikhand.ttf",
     "engine/derived.py",
     "engine/export.py",
+    "engine/group.py",
     "engine/layout.py",
     "engine/MANIFEST.txt",
     "engine/mesh.py",

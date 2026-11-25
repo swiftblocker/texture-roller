@@ -292,9 +292,22 @@ def _load_portrait(upload: bytes, tile_w: float, detail: float, shading: bool, g
     return a
 
 
+def _load_group(upload: bytes, art_h_mm: float) -> Art:
+    from . import group as groupmod
+    try:
+        ink, rep = groupmod.make_group(upload, art_h_mm, ppm=5.0)
+    except groupmod.GroupError as exc:
+        raise ArtError(str(exc))
+    a = _trace_mask(ink)
+    a.name = "group"
+    a.sketch = dict(rep, mode="group")
+    return a
+
+
 def load(art_source: str, upload: bytes | None = None, upload_name: str | None = None,
          art_style: str = "trace", tile_width_mm: float | None = None,
-         sketch_detail: float = 0.5, sketch_shading: bool = True, sketch_gap_mm: float = 1.0) -> Art:
+         sketch_detail: float = 0.5, sketch_shading: bool = True, sketch_gap_mm: float = 1.0,
+         group_h_mm: float | None = None) -> Art:
     if art_source.startswith("pattern:"):
         key = art_source
         if key not in _CACHE:
@@ -309,6 +322,10 @@ def load(art_source: str, upload: bytes | None = None, upload_name: str | None =
     nm = (upload_name or "").lower()
     is_svg = nm.endswith(".svg") or head.startswith(b"<?xml") or b"<svg" in head
     portrait = art_style == "portrait" and not is_svg
+    grp = art_style == "group" and not is_svg
+    if grp:
+        gh = round(float(group_h_mm or 240.0) * 2) / 2.0
+        key = "%s|group|%.1f" % (key, gh)
     if portrait:
         tw = float(tile_width_mm or 140.0)
         key = "%s|portrait|%.1f|%.2f|%d|%.2f" % (key, round(tw * 2) / 2.0, round(float(sketch_detail), 2), 1 if sketch_shading else 0, round(float(sketch_gap_mm), 2))
@@ -318,6 +335,8 @@ def load(art_source: str, upload: bytes | None = None, upload_name: str | None =
     try:
         if is_svg:
             a = _load_svg(upload)
+        elif grp:
+            a = _load_group(upload, gh)
         elif portrait:
             a = _load_portrait(upload, round(tw * 2) / 2.0, float(sketch_detail), bool(sketch_shading), float(sketch_gap_mm))
         else:
@@ -325,7 +344,7 @@ def load(art_source: str, upload: bytes | None = None, upload_name: str | None =
     except ArtError:
         raise
     except Exception as exc:
-        if is_svg or not portrait:
+        if is_svg or not (portrait or grp):
             raise
         raise ArtError("could not read the picture: %s" % exc)
     _CACHE[key] = a

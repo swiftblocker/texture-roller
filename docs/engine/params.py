@@ -14,7 +14,7 @@ ENUMS = {
     "bore_preset": ("dowel_half", "none", "rod_8", "dowel_3q", "custom"),
     "clay_body": ("stoneware", "porcelain", "earthenware", "paper"),
     "clay_state": ("soft", "firm", "leather"),
-    "art_style": ("trace", "portrait"),
+    "art_style": ("trace", "portrait", "group"),
     "text_layout": ("single", "band", "allover"),
     "text_relief": ("pressed", "raised"),
     "text_frame": ("halo", "none", "pill", "ring"),

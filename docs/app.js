@@ -982,17 +982,26 @@ async function looksLikePhoto(f) {
 function syncStyleUI() {
   const up = S.params.art_source === "upload" && !!S.upload;
   const portrait = up && S.params.art_style === "portrait";
+  const group = up && S.params.art_style === "group";
   $("art-style").hidden = !up;
-  $("style-trace").setAttribute("aria-pressed", String(!portrait));
+  $("style-trace").setAttribute("aria-pressed", String(!portrait && !group));
   $("style-portrait").setAttribute("aria-pressed", String(portrait));
-  for (const id of ["pt-detail-wrap", "pt-shading-wrap", "pt-fit"]) $(id).hidden = !portrait;
+  $("style-group").setAttribute("aria-pressed", String(group));
+  for (const id of ["pt-detail-wrap", "pt-shading-wrap"]) $(id).hidden = !portrait;
+  $("pt-fit").hidden = !(portrait || group);
+  $("pt-fit").textContent = group ? "Fit roller to this group" : "Fit roller to this face";
   $("pt-detail").value = S.params.sketch_detail;
   $("pt-detail-out").textContent = Number(S.params.sketch_detail).toFixed(2);
   $("pt-shading").checked = !!S.params.sketch_shading;
   const rep = S.last && S.last.art_report && S.last.art_report.sketch;
   const note = $("pt-note");
-  note.hidden = !(portrait && rep && rep.face_found === false);
-  note.textContent = note.hidden ? "" : "No face found; using the centre of the photo.";
+  if (group) {
+    note.hidden = !(rep && rep.mode === "group");
+    note.textContent = note.hidden ? "" : (rep.faces === 1 ? "Found 1 face." : "Found " + rep.faces + " faces.") + " Faces turned away may be missed.";
+  } else {
+    note.hidden = !(portrait && rep && rep.face_found === false);
+    note.textContent = note.hidden ? "" : "No face found; using the centre of the photo.";
+  }
 }
 async function useUpload(f) {
   if (!f) return;
@@ -1010,6 +1019,14 @@ async function useUpload(f) {
 $("upload-file").addEventListener("change", (e) => { useUpload(e.target.files[0]); e.target.value = ""; });
 $("style-trace").onclick = () => { setParam("art_style", "trace"); syncStyleUI(); };
 $("style-portrait").onclick = () => { setParam("art_style", "portrait"); syncStyleUI(); };
+// Group photo: the whole group goes once round the roller at full length, so fit it straight away
+$("style-group").onclick = () => {
+  S.params.art_style = "group";
+  syncStyleUI();
+  $("pt-note").hidden = false;
+  $("pt-note").textContent = "Finding faces. The first group photo loads the face finder (11 MB).";
+  $("pt-fit").click();
+};
 // Redraw while dragging: send a request at most every 120 ms. The engine runs one at a time and
 // keeps only the newest waiting request, so the drawing follows the thumb without piling up.
 let detailTick = null;

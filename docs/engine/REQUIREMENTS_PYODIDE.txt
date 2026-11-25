@@ -6,3 +6,4 @@ svgelements
 potracer
 trimesh
 fonttools
+opencv-python  # loaded on demand, art_style "group" only

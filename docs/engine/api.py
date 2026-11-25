@@ -28,7 +28,9 @@ def compute(P: Params, upload=None, upload_name=None, pitch=None) -> Field:
     # Draft widens every raised line at its base by depth*tan(draft) per side, so the sketch
     # leaves gaps wide enough that the clay gap stays >= 1.0 mm (R20, R21).
     gap = 1.0 + 2.0 * P.depth * math.tan(math.radians(P.draft_deg))
-    art = artmod.load(P.art_source, upload, upload_name, P.art_style, tw, P.sketch_detail, P.sketch_shading, gap)
+    # group photos fill the roller's length: art height = length - both end bands - 4 mm air
+    gh = max(20.0, P.length - 2 * P.band_eff - 4.0)
+    art = artmod.load(P.art_source, upload, upload_name, P.art_style, tw, P.sketch_detail, P.sketch_shading, gap, gh)
     lay = layoutmod.build(P, art, pitch)
     if art.sketch:
         lay.art_report["sketch"] = art.sketch
@@ -63,7 +65,7 @@ def resolved(P, F):
 def preview(params: dict, upload: bytes | None = None, upload_name: str | None = None) -> dict:
     P = Params.from_dict(params)
     pitch = P.pitch_preview
-    if (P.text or "").strip():
+    if (P.text or "").strip() or (P.art_style == "group" and P.art_source == "upload"):
         pitch = min(pitch, 0.35)   # letters need a finer grid than the art to be measured (R19-R21)
     F = compute(P, upload, upload_name, pitch)
     dv = derivedmod.derived(P, F)
@@ -90,6 +92,8 @@ def fit_portrait(params: dict, upload: bytes | None) -> dict:
     P = Params.from_dict(params)
     if not upload:
         raise artmod.ArtError("no picture to fit")
+    if P.art_style == "group":
+        return fit_group(P, upload)
     aspect, found = sketchmod.head_aspect(upload)
     art_h = max(10.0, P.length - 2 * P.band_eff)
     width = art_h * aspect
@@ -102,6 +106,18 @@ def fit_portrait(params: dict, upload: bytes | None) -> dict:
 def fonts() -> list:
     from . import text as textmod
     return textmod.fonts()
+
+
+def fit_group(P, upload) -> dict:
+    """Whole group once around: art height = length - bands - 4 mm, circumference = art width.
+    Block-print relief: 1.2 mm deep, 10 deg draft (gap floor stays near 1.4 mm, R20/R21)."""
+    from . import group as groupmod
+    asp, n = groupmod.aspect(upload)
+    if n == 0:
+        raise artmod.ArtError("no faces found in the photo; try a photo where faces look at the camera")
+    art_h = max(20.0, P.length - 2 * P.band_eff - 4.0)
+    d = min(100.0, max(16.0, math.floor(art_h * asp / math.pi * 10.0) / 10.0))
+    return {"diameter": d, "n_around": 1, "n_along": 1, "depth": 1.2, "draft_deg": 10.0, "faces": n, "face_found": True}
 
 
 def patterns() -> list:

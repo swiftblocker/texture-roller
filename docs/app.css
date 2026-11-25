@@ -384,3 +384,7 @@ input[type="checkbox"] { accent-color: var(--color-accent); width: 16px; height:
   .toolbar #upload-art { min-height: 52px; font-size: var(--step-1, 1.125rem); }
   .bar-export .btn.btn-stl { height: 44px; font-size: var(--step-0, 1rem); padding: 0 14px; }
 }
+/* Visually hidden but rendered, so the label can open it on phones. */
+.vh-file { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+label.btn-upload { display: inline-flex; align-items: center; justify-content: center; cursor: pointer; user-select: none; }
+label.btn-upload:has(+ .vh-file:focus-visible) { outline: 2px solid var(--color-accent); outline-offset: 2px; }

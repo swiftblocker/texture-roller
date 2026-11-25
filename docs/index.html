@@ -34,7 +34,8 @@
 
   <section class="centre" aria-label="Clay slab preview">
     <div class="toolbar" role="toolbar" aria-label="Slab view">
-      <button type="button" id="upload-art" class="btn btn-upload">Upload a picture</button>
+      <label id="upload-art" class="btn btn-upload" for="upload-file">Upload a picture</label>
+      <input type="file" id="upload-file" class="vh-file" accept="image/png,image/jpeg,image/svg+xml,.svg,.png,.jpg,.jpeg">
       <div class="seg" role="group" aria-label="Size basis">
         <button type="button" id="size-wet" aria-pressed="true">Wet size</button>
         <button type="button" id="size-fired" aria-pressed="false">Fired size</button>

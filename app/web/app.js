@@ -801,12 +801,18 @@ const syncUploadBtn = () => {
   uploadBtn.textContent = f ? "Change picture" : "Upload a picture";
   uploadBtn.title = f ? S.upload.name : "SVG, PNG or JPEG. PNG and JPEG are traced to black and white.";
 };
-uploadBtn.onclick = () => {
-  const sel = $("f-art"), file = $("f-file");
-  if (sel.value !== "upload") { sel.value = "upload"; sel.dispatchEvent(new Event("change")); }
-  file.hidden = false;
-  file.click();
-};
+/* The label opens its own always-rendered input (#upload-file): phones refuse to open a
+   picker for an input inside a collapsed section, so the Art panel's input is not used here. */
+function useUpload(f) {
+  if (!f) return;
+  S.upload = f;
+  const sel = $("f-art");
+  sel.value = "upload";
+  sel.dispatchEvent(new Event("change"));
+  syncUploadBtn();
+  schedule();
+}
+$("upload-file").addEventListener("change", (e) => { useUpload(e.target.files[0]); e.target.value = ""; });
 $("f-file").addEventListener("change", syncUploadBtn);
 /* Drag a picture onto the slab to use it. */
 const slabWrap = $("slab-wrap");
@@ -817,10 +823,7 @@ slabWrap.addEventListener("drop", (e) => {
   e.preventDefault(); slabWrap.classList.remove("drop");
   const f = [...(e.dataTransfer?.files || [])].find((x) => ARTISH.test(x.name) || /^image\//.test(x.type));
   if (!f) return;
-  const sel = $("f-art"), file = $("f-file");
-  if (sel.value !== "upload") { sel.value = "upload"; sel.dispatchEvent(new Event("change")); }
-  const dt = new DataTransfer(); dt.items.add(f); file.files = dt.files;
-  file.dispatchEvent(new Event("change"));
+  useUpload(f);
 });
 $("f-art").addEventListener("change", syncUploadBtn);
 $("random-start").onclick = () => {

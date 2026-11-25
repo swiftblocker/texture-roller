@@ -3,7 +3,7 @@
  * Same-origin files: network first, cache as the fallback (updates arrive on deploy).
  * Runtime and package downloads (jsDelivr, PyPI): cache first, they never change per version.
  * Relative URLs only, so it works under https://<user>.github.io/<repo>/ . */
-const VERSION = "roller-v1";
+const VERSION = "roller-v2";
 const CDN_HOSTS = ["cdn.jsdelivr.net", "pypi.org", "files.pythonhosted.org"];
 const CORE = [
   "./", "index.html", "app.css", "app.js", "engine-client.js", "worker.js",
@@ -43,7 +43,9 @@ self.addEventListener("fetch", (e) => {
     e.respondWith((async () => {
       const cache = await caches.open(VERSION);
       try {
-        const r = await fetch(req);
+        // no-cache: always revalidate with the server, so a deploy is never mixed with a
+        // heuristically cached older file (304 when unchanged)
+        const r = await fetch(req.mode === "navigate" ? req : new Request(req, { cache: "no-cache" }));
         if (r.ok) cache.put(req, r.clone());
         return r;
       } catch (err) {

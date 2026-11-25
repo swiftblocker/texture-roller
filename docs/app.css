@@ -131,6 +131,23 @@ input:disabled, select:disabled { background: var(--color-panel); color: var(--c
 input.invalid { border-color: var(--color-block); }
 input[type="number"]::placeholder { color: var(--color-muted); }
 
+textarea {
+  width: 100%; min-height: 64px; resize: vertical; background: var(--color-well); border: 1px solid var(--color-rule);
+  border-radius: var(--radius); padding: 8px 12px; font: inherit; font-size: var(--step--1); line-height: 1.4;
+}
+textarea:hover { background: var(--color-well-hover); }
+.ideas { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
+.idea {
+  display: grid; justify-items: center; gap: 4px; padding: 8px 4px 6px; background: var(--color-well);
+  border: 1px solid var(--color-rule); border-radius: var(--radius); cursor: pointer;
+  font-size: 0.75rem; line-height: 1.2; color: var(--color-ink-2); text-align: center;
+}
+.idea:hover { background: var(--color-well-hover); border-color: var(--color-rule-strong); }
+.idea:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+.idea svg { width: 44px; height: 40px; fill: var(--color-ink); }
+.idea svg .pic { fill: var(--color-rule-strong); }
+.idea svg .ln { fill: none; stroke: var(--color-ink); stroke-width: 3; stroke-linecap: round; }
+.text-note.warn { color: var(--color-block); }
 .check { display: inline-flex; align-items: center; gap: 8px; font-size: var(--step--1); color: var(--color-ink-2); min-height: var(--ctl); cursor: pointer; }
 input[type="checkbox"] { accent-color: var(--color-accent); width: 16px; height: 16px; margin: 0; }
 

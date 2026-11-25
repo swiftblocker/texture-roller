@@ -1,11 +1,29 @@
 {
-  "version": "a1ece8088513",
+  "version": "6df1a69d2122",
   "files": [
     "engine/__init__.py",
     "engine/api.py",
     "engine/art.py",
     "engine/body.py",
     "engine/data/checks.json",
+    "engine/data/fonts/bebas-OFL.txt",
+    "engine/data/fonts/bebas.ttf",
+    "engine/data/fonts/caveat-OFL.txt",
+    "engine/data/fonts/caveat.ttf",
+    "engine/data/fonts/cherrybomb-OFL.txt",
+    "engine/data/fonts/cherrybomb.ttf",
+    "engine/data/fonts/dancing-OFL.txt",
+    "engine/data/fonts/dancing.ttf",
+    "engine/data/fonts/fraunces-OFL.txt",
+    "engine/data/fonts/fraunces.ttf",
+    "engine/data/fonts/lilita-OFL.txt",
+    "engine/data/fonts/lilita.ttf",
+    "engine/data/fonts/nunito-OFL.txt",
+    "engine/data/fonts/nunito.ttf",
+    "engine/data/fonts/pacifico-OFL.txt",
+    "engine/data/fonts/pacifico.ttf",
+    "engine/data/fonts/shrikhand-OFL.txt",
+    "engine/data/fonts/shrikhand.ttf",
     "engine/derived.py",
     "engine/export.py",
     "engine/layout.py",
@@ -15,6 +33,7 @@
     "engine/relief.py",
     "engine/REQUIREMENTS_PYODIDE.txt",
     "engine/rules.py",
-    "engine/sketch.py"
+    "engine/sketch.py",
+    "engine/text.py"
   ]
 }

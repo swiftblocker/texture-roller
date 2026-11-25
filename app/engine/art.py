@@ -18,6 +18,7 @@ PATTERNS = [
     {"id": "waves", "name": "Waves"},
     {"id": "chevron", "name": "Chevron"},
     {"id": "leaf", "name": "Leaf"},
+    {"id": "plain", "name": "Plain (text only)"},
 ]
 
 
@@ -145,6 +146,8 @@ def _pattern(pid):
         for y0 in (1 / 6, 1 / 2, 5 / 6):
             y = tri + y0
             polys.append(np.vstack([np.stack([x, y + 0.055], 1), np.stack([x[::-1], (y - 0.055)[::-1]], 1)]))
+    elif pid == "plain":
+        return Art([], (0, 0, 1, 1), tiles=True, name=pid)
     elif pid == "leaf":
         a, b = 0.22, 0.09
         for (cx, cy, ang) in ((0.25, 0.25, 45), (0.75, 0.25, -45), (0.25, 0.75, -45), (0.75, 0.75, 45)):

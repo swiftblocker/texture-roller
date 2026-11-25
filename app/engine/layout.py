@@ -50,6 +50,7 @@ class Layout:
     blend_half: float
     flags: dict = field(default_factory=dict)
     art_report: dict = field(default_factory=dict)
+    text_os: object = None        # (M2,N2) bool, text letters + frame, same orientation as top_os
 
 
 def _lattice_dist(x, phase, cell):
@@ -182,12 +183,19 @@ def build(P, art, pitch, os=OS) -> Layout:
         blend_half = min(P.seam_blend_pct / 100.0 * C / 2.0, 0.45 * cell_w)
         mism = 0.0
 
+    text_mask, text_rep = None, None
+    if (P.text or "").strip():
+        from . import text as textmod
+        top, text_mask, text_rep = textmod.apply(P, top, C, L, band_rows, phase, cell_w)
     drawn = top
     idx = (-np.arange(N2)) % N2
     top_os = drawn[:, idx] if P.mirror else drawn
+    text_os = None if text_mask is None else (text_mask[:, idx] if P.mirror else text_mask)
     rep = dict(rep)
     rep["traced"] = bool(art.traced)
     rep["dropped_thin"] = 0
+    if text_rep:
+        rep["text"] = text_rep
     return Layout(
         N=N, M=M, pt=pt, pz=pz, os=os, top_os=np.ascontiguousarray(top_os), drawn_top=drawn,
         band_rows=band_rows, cell_w=cell_w, tile_h=tile_h, n_along=n_along,
@@ -196,5 +204,5 @@ def build(P, art, pitch, os=OS) -> Layout:
         seam_mismatch=mism, bg_edge_fraction=bgf, blend_half=blend_half,
         flags={"rotation_snapped": rot != P.rotation, "odd_half_drop": hdrop and n % 2 == 1,
                "y0": y0, "invert": P.invert},
-        art_report=rep,
+        art_report=rep, text_os=text_os,
     )

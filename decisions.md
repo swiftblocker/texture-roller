@@ -58,3 +58,17 @@ Feature 6/10 (from 4), skill 4/10 (from 3). Squint 0.738 -> 0.743. Reports: redt
 - Cheek planes: dense hatch band inside each face edge (8 mm shade side, 5.5 mm lit) plus wherever the skin is darker than its own median. Concentric apple arcs were tried and dropped: they read as bracket arcs (FL 9).
 - Beard stroke spacing raised (centre distance 3.2 mm) so the 1.45 mm portrait gap floor no longer fuses the chin strokes into a black bar.
 - Rejected from r4: further apple arcs (bracket fault), a bridge line (FG 5 says none on a lit nose).
+
+## 2026-11-25 Lettering (owner: "incorporate text using open source fonts ... size it and place it where you want ... a name above a picture or repeat a saying like hope ... trendy")
+- 9 SIL OFL fonts from github.com/google/fonts, variable ones fixed at one weight and subset to Latin-1 (tools/fetch_fonts.py, licence beside each file): Pacifico, Shrikhand, Cherry Bomb One, Fraunces (soft, wonky, 800), Bebas Neue, Nunito Black, Caveat Bold, Dancing Script Bold, Lilita One. Glyph outlines through fontTools (added to the Pyodide packages), GPOS/kern pair kerning, nonzero fill.
+- Rejected: Playfair Black (0.4 mm hairline serifs at 12 mm) and Alfa Slab One (counters close up under 24 mm). Replaced by Lilita One (clean from 9 mm).
+- Layouts: in place (copies around, arch, wave, turn), band around (repeats chosen so the ring closes exactly at the seam, separator dot/star/heart/diamond/flower/wave), all over (rows, every other one shifted half a step). Relief pressed or stands up; frame clear margin, pill, pill with border, none; solid or outline.
+- Seven starting ideas drawn as small pictures: name over the picture, rainbow arch, word band, wavy saying, words all over, maker's stamp, up the side. Each was sized so it passes R19-R21, R26, R74-R79 at the export pitch on the default roller (app/tests/test_text.py).
+- Default letter spacing 8 %: at 0 % most fonts close their letter gaps under 1 mm (R20/R21).
+- The clear margin is never narrower than the R20 groove plus the draft widening (1.9 mm at 1.5 mm / 15 deg). 1.5 mm closed to 0.9 mm at the base.
+- Letter shapes are not carved to open tight gaps: carving along narrow background also chewed every inside corner (55 % of HOPE lost). Tight gaps are reported (R20/R21) instead; only slivers under the R74 width and orphan stubs are dropped, and R79 says how much went.
+- Where the margin cuts the art, art slivers and crumbs under 4 mm2 are removed (raised pass last); letter counters are never touched and are always cleared of art.
+- Text previews run on a 0.35 mm grid and treat R19-R21 values within one grid cell of the limit as a pass, with a note; the export re-measures at 0.2 mm and still blocks.
+- relief._widths now joins pieces across the seam before measuring (a letter on the seam read as two thin halves: false R19b/R26).
+- Service worker: same-origin files are revalidated (cache: no-cache) so a deploy never mixes an old app.js with a new engine; cache name roller-v2.
+

@@ -80,9 +80,17 @@ def height_field(P, lay, s=None):
         dist = np.abs(((x - ph + cell / 2) % cell) - cell / 2)
         w = np.clip(dist / lay.blend_half, 0, 1)
         w = w * w * (3 - 2 * w)
+        if lay.text_os is not None:
+            # protect the letters and their sloped sides (draft + edge round) from the blend
+            k = int(math.ceil((d * math.tan(math.radians(P.draft_deg)) + P.edge_round + 0.3) / pt_os))
+            tm = np.pad(lay.text_os, ((0, 0), (k, k)), mode="wrap")
+            tm = ndi.binary_dilation(tm, iterations=k)[:, k:-k]
+            w = np.where(tm[::os, ::os], 1.0, w[None, :])
+        else:
+            w = w[None, :]
         hbg = d if P.invert else 0.0
         art = ~bandrow
-        H[art] = hbg + w[None, :] * (H[art] - hbg)
+        H[art] = hbg + (np.broadcast_to(w, H.shape)[art]) * (H[art] - hbg)
     if P.alignment_ticks and P.bands_on:
         xx = np.minimum(x, P.C - x)
         v = np.clip(1 - xx / 0.5, 0, 1)
@@ -104,6 +112,30 @@ def radius_map(P, H, lay):
 
 
 # ---------------------------------------------------------------- metrics
+def _label_wrapped(mask):
+    """ndi.label, but a piece crossing the seam (last column -> column 0) is one piece, not two
+    thin halves (which would read as a false R19b / R26)."""
+    lab, n = ndi.label(mask)
+    if n == 0:
+        return lab, n
+    parent = np.arange(n + 1)
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+    a, b = lab[:, -1], lab[:, 0]
+    both = (a > 0) & (b > 0)
+    for x, y in set(zip(a[both].tolist(), b[both].tolist())):
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            parent[max(rx, ry)] = min(rx, ry)
+    roots = np.array([find(i) for i in range(n + 1)])
+    uniq, inv = np.unique(roots, return_inverse=True)
+    return inv[lab].astype(lab.dtype), len(uniq) - 1
+
+
 def _widths(mask, pt, pz, nozzle, pad=24):
     """-> (skeleton p2 width or inf, min component max-width or inf, thin component count)."""
     if not mask.any():
@@ -125,7 +157,7 @@ def _widths(mask, pt, pz, nozzle, pad=24):
     if vals.size == 0:
         vals = (2 * edt - pm)[:, cs][sk[:, cs]]
     p2 = float(np.percentile(vals, 2)) if vals.size else math.inf
-    lab, n = ndi.label(mask)
+    lab, n = _label_wrapped(mask)
     if n:
         ix = np.arange(1, n + 1)
         mx = ndi.maximum(edt[:, cs], lab, index=ix)

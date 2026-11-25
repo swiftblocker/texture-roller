@@ -124,6 +124,12 @@ Reference tables: `references/dimensions.md` (commercial and printed sizes), `re
 | R71 | The slab preview is generated from the exported heightmap, not from the source art. | The preview must show what the roller will actually print. | derived | high | test |
 | R72 | Round-trip test: unroll the exported mesh's radius map, mirror it, and compare it to the slab preview. Max error <= 0.05 mm. | Proves the mirror, invert and seam logic end to end. | derived | high | test suite |
 | R73 | Every export writes a sidecar `.json` with all parameters, the rule results, and the warnings the user accepted. | You can tell later why a roller printed the way it did. | derived | high | always |
+| R74 | Letter strokes (10th percentile along the skeleton) >= 1 mm plus the draft loss at three quarters height for pressed letters; >= the R20 groove width plus draft for raised letters. The warning names the smallest letter height that passes. | Hairlines of scripts and serifs are thinner than clay can take. | derived | medium | WARN |
+| R75 | Text stays inside the art area: never on the end bands, never off the roller. | Letters cut by the band read as a mistake. | derived | high | WARN |
+| R76 | Text copies fit their share of the circumference; text bigger than 1.5 x C or taller than L is not drawn. The warning names the largest height that fits. | Overlapping copies merge into a smear; oversized text costs seconds for nothing. | derived | high | WARN |
+| R77 | Letters must differ from what surrounds them (at least 30 % of a 2-pixel ring around the letters). | Raised letters on untouched clay with no frame are invisible. | derived | high | WARN |
+| R78 | Characters the font lacks, a 4th line, or more than 60 characters are reported, never dropped silently. | The potter must see what the roller will not carry. | derived | high | WARN |
+| R79 | If the clay clean-up (slivers under the R74 width) removes more than 15 % of the letter area, say so. | Text that is too small vanishes; it must not vanish silently. | derived | high | WARN |
 
 ---
 

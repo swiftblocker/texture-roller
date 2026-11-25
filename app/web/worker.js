@@ -6,7 +6,7 @@
 const PYODIDE_VERSION = "0.27.7";
 const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v" + PYODIDE_VERSION + "/full/";
 const BASE = new URL(".", self.location.href);
-const PACKAGES = ["numpy", "scipy", "scikit-image", "pillow"];
+const PACKAGES = ["numpy", "scipy", "scikit-image", "pillow", "fonttools"];
 const PIP = ["svgelements", "potracer", "trimesh"];
 
 importScripts(PYODIDE + "pyodide.js");

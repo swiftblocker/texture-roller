@@ -15,6 +15,11 @@ ENUMS = {
     "clay_body": ("stoneware", "porcelain", "earthenware", "paper"),
     "clay_state": ("soft", "firm", "leather"),
     "art_style": ("trace", "portrait"),
+    "text_layout": ("single", "band", "allover"),
+    "text_relief": ("pressed", "raised"),
+    "text_frame": ("halo", "none", "pill", "ring"),
+    "text_style": ("solid", "outline"),
+    "text_sep": ("none", "dot", "star", "heart", "diamond", "flower", "wave"),
 }
 BORE_BASE = {"dowel_half": 12.70, "dowel_3q": 19.05, "rod_8": 8.00}
 SHRINK = {"earthenware": 7.0, "stoneware": 12.5, "porcelain": 15.0, "paper": 14.0}
@@ -59,6 +64,25 @@ class Params:
     pitch_preview: float = 0.5
     pitch_export: float = 0.2
     cnc_rotary_max_length: float = 0
+    # lettering (text.py); empty text = none
+    text: str = ""
+    text_font: str = "pacifico"
+    text_size: float = 12.0
+    text_layout: str = "single"
+    text_count: float = 1
+    text_x: float = 50.0
+    text_y: float = 85.0
+    text_angle: float = 0.0
+    text_arch: float = 0.0
+    text_wave: float = 0.0
+    text_track: float = 8.0
+    text_relief: str = "pressed"
+    text_frame: str = "halo"
+    text_halo: float = 1.5
+    text_style: str = "solid"
+    text_sep: str = "dot"
+    text_gap: float = 5.0
+    text_row_gap: float = 6.0
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "Params":
@@ -82,6 +106,8 @@ class Params:
                     v = v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on")
                 elif isinstance(default, (int, float)):
                     v = float(v)
+                elif f.name == "text":
+                    v = "" if v is None else str(v)
                 elif isinstance(default, str):
                     v = str(v)
             except (TypeError, ValueError):
@@ -91,6 +117,14 @@ class Params:
             if isinstance(v, float) and not math.isfinite(v):
                 raise ParamError(f"parameter {f.name} is not finite")
             setattr(p, f.name, v)
+        _lim = {"text_size": (3.0, 120.0), "text_count": (1, 24), "text_x": (0.0, 100.0), "text_y": (0.0, 100.0),
+                "text_angle": (-180.0, 180.0), "text_arch": (-300.0, 300.0), "text_wave": (0.0, 60.0),
+                "text_track": (-20.0, 80.0), "text_halo": (0.0, 10.0), "text_gap": (0.0, 100.0), "text_row_gap": (0.0, 100.0)}
+        for k, (lo, hi) in _lim.items():
+            setattr(p, k, min(hi, max(lo, getattr(p, k))))
+        p.text_count = int(round(p.text_count))
+        if p.text and (len(p.text) > 200):
+            p.text = p.text[:200]
         if not (p.art_source.startswith("pattern:") or p.art_source == "upload"):
             raise ParamError("art_source must be pattern:<id> or upload")
         return p

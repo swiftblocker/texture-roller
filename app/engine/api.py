@@ -62,7 +62,10 @@ def resolved(P, F):
 
 def preview(params: dict, upload: bytes | None = None, upload_name: str | None = None) -> dict:
     P = Params.from_dict(params)
-    F = compute(P, upload, upload_name, P.pitch_preview)
+    pitch = P.pitch_preview
+    if (P.text or "").strip():
+        pitch = min(pitch, 0.35)   # letters need a finer grid than the art to be measured (R19-R21)
+    F = compute(P, upload, upload_name, pitch)
     dv = derivedmod.derived(P, F)
     rules = rulesmod.evaluate(P, F, dv)
     vis, can = rulesmod.summarize(rules)
@@ -94,6 +97,11 @@ def fit_portrait(params: dict, upload: bytes | None) -> dict:
     # Portrait relief: shallower and gentler than the default so the sketch's close strokes
     # stay separate in clay (gap floor 1.0 + 2 d tan(draft) = 1.42 mm). R13 range, R17 soft clay 1-2 mm, R22 >= 5 deg.
     return {"diameter": d, "n_around": 1, "n_along": 1, "depth": 1.2, "draft_deg": 10.0, "face_found": bool(found)}
+
+
+def fonts() -> list:
+    from . import text as textmod
+    return textmod.fonts()
 
 
 def patterns() -> list:

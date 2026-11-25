@@ -5,3 +5,4 @@ Pillow
 svgelements
 potracer
 trimesh
+fonttools

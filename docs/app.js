@@ -16,6 +16,10 @@ const DEFAULTS = {
   split: false, clay_body: "stoneware", clay_state: "firm",
   glaze_flag: false, nozzle: 0.4, pitch_preview: 0.5, pitch_export: 0.2,
   cnc_rotary_max_length: 0,
+  text: "", text_font: "pacifico", text_size: 12.0, text_layout: "single", text_count: 1,
+  text_x: 50.0, text_y: 85.0, text_angle: 0.0, text_arch: 0.0, text_wave: 0.0, text_track: 8.0,
+  text_relief: "pressed", text_frame: "halo", text_halo: 1.5, text_style: "solid",
+  text_sep: "dot", text_gap: 5.0, text_row_gap: 6.0,
 };
 
 const S = {
@@ -27,6 +31,7 @@ const S = {
   passes: 1,
   phases: [0, 0, 0],
   seq: 0,
+  shown: 0,
   ctl: null,
   busy: 0,
 };
@@ -64,7 +69,29 @@ const OPTS = {
   bore_preset: [["dowel_half", "1/2 in dowel"], ["dowel_3q", "3/4 in dowel"], ["rod_8", "8 mm rod"], ["custom", "Custom"], ["none", "No bore"]],
   clay_body: [["stoneware", "Stoneware"], ["porcelain", "Porcelain"], ["earthenware", "Earthenware"], ["paper", "Paper clay"]],
   clay_state: [["soft", "Soft"], ["firm", "Firm"], ["leather", "Leather hard"]],
+  text_font: [],
+  text_layout: [["single", "In place"], ["band", "Band around"], ["allover", "All over"]],
+  text_relief: [["pressed", "Pressed in"], ["raised", "Stands up"]],
+  text_frame: [["halo", "Clear margin"], ["pill", "Pill"], ["ring", "Pill with border"], ["none", "None"]],
+  text_style: [["solid", "Solid"], ["outline", "Outline"]],
+  text_sep: [["dot", "Dot"], ["star", "Star"], ["heart", "Heart"], ["diamond", "Diamond"], ["flower", "Flower"], ["wave", "Wave"], ["none", "None"]],
 };
+
+/* Open source fonts (SIL OFL) bundled in engine/data/fonts. min_mm matches engine/text.py FONTS:
+ * the smallest letter height that keeps 1 mm clay gaps at 1.5 mm depth. */
+const FONTS = [
+  ["pacifico", "Pacifico", "retro script", 12], ["shrikhand", "Shrikhand", "groovy 70s", 16],
+  ["cherrybomb", "Cherry Bomb One", "bubble", 12], ["fraunces", "Fraunces", "soft serif", 12],
+  ["bebas", "Bebas Neue", "tall caps", 11], ["nunito", "Nunito Black", "rounded", 11],
+  ["caveat", "Caveat Bold", "handwritten", 11], ["dancing", "Dancing Script", "wedding script", 28],
+  ["lilita", "Lilita One", "chunky", 9],
+];
+OPTS.text_font = FONTS.map(([id, n, v, m]) => [id, n + ", " + v + " (" + m + " mm and up)"]);
+
+const hasText = (p) => !!(p.text && p.text.trim());
+const isSingle = (p) => hasText(p) && p.text_layout === "single";
+// the idea samples; picking another idea swaps a sample for the new one, typed words are kept
+const isRepeat = (p) => hasText(p) && p.text_layout !== "single";
 
 const GROUPS = [
   { name: "Size", open: true, fields: [
@@ -83,6 +110,28 @@ const GROUPS = [
     { k: "spacing", label: "Spacing between tiles", unit: "mm", t: "num", step: 0.5, min: 0, rule: "R34" },
     { special: "mode" },
     { special: "solver" },
+  ] },
+  { name: "Text", open: true, fields: [
+    { special: "text-ideas" },
+    { special: "text-input" },
+    { k: "text_font", label: "Font", t: "sel", on: hasText },
+    { k: "text_size", label: "Letter height", unit: "mm", t: "num", step: 0.5, min: 3, max: 120, on: hasText, rule: "R74" },
+    { special: "text-size-note" },
+    { k: "text_layout", label: "Layout", t: "sel", on: hasText },
+    { k: "text_count", label: "Copies around", t: "int", min: 1, max: 24, on: isSingle, rule: "R76" },
+    { k: "text_y", label: "Height on the slab", unit: "% from bottom", t: "num", step: 1, min: 0, max: 100, on: (p) => hasText(p) && p.text_layout !== "allover", rule: "R75" },
+    { k: "text_x", label: "Place around", unit: "% of each share", t: "num", step: 1, min: 0, max: 100, on: hasText },
+    { k: "text_arch", label: "Arch", unit: "deg", t: "num", step: 5, min: -300, max: 300, on: isSingle },
+    { k: "text_wave", label: "Wave", unit: "% of height", t: "num", step: 1, min: 0, max: 60, on: hasText },
+    { k: "text_angle", label: "Turn", unit: "deg", t: "num", step: 5, min: -180, max: 180, on: isSingle },
+    { k: "text_track", label: "Letter spacing", unit: "%", t: "num", step: 1, min: -20, max: 80, on: hasText, rule: "R21" },
+    { k: "text_relief", label: "Letters in the clay", t: "sel", on: hasText, rule: "R77" },
+    { k: "text_frame", label: "Frame", t: "sel", on: hasText },
+    { k: "text_halo", label: "Margin", unit: "mm", t: "num", step: 0.5, min: 0, max: 10, on: (p) => hasText(p) && p.text_frame !== "none" },
+    { k: "text_style", label: "Letter style", t: "sel", on: hasText },
+    { k: "text_sep", label: "Between words", t: "sel", on: isRepeat },
+    { k: "text_gap", label: "Space between words", unit: "mm", t: "num", step: 0.5, min: 0, max: 100, on: isRepeat },
+    { k: "text_row_gap", label: "Space between rows", unit: "mm", t: "num", step: 0.5, min: 0, max: 100, on: (p) => hasText(p) && p.text_layout === "allover" },
   ] },
   { name: "Relief", open: true, fields: [
     { k: "depth", label: "Depth", unit: "mm", t: "num", step: 0.1, min: 0.1, max: 8, rule: "R13" },
@@ -116,6 +165,7 @@ const rowsByKey = {};
 
 function setParam(k, v) {
   S.params[k] = v;
+  if (k === "text_size" || k === "text_font") syncTextNote();
   syncEnabled();
   readouts();
   schedule();
@@ -288,6 +338,93 @@ function solverBlock() {
   return wrap;
 }
 
+/* ---------- text ---------- */
+/* Each idea is a starting layout a potter would reach for. The drawing shows where the words go
+ * on one revolution of the slab (black bars = words, grey = the picture). */
+const TEXT_IDEAS = [
+  { id: "name", label: "Name over the picture", sample: "Grandma Rose",
+    set: () => ({ text_layout: "single", text_count: 1, text_y: 88, text_x: 50, text_arch: 0, text_wave: 0, text_angle: 0, text_font: "pacifico", text_size: 14, text_frame: "halo", text_relief: "pressed", text_style: "solid" }),
+    svg: '<rect x="4" y="16" width="16" height="16" rx="3" class="pic"/><rect x="24" y="16" width="16" height="16" rx="3" class="pic"/><rect x="5" y="7" width="14" height="4" rx="2"/><rect x="25" y="7" width="14" height="4" rx="2"/>' },
+  { id: "arch", label: "Rainbow arch", sample: "Sunny Days",
+    set: () => ({ text_layout: "single", text_count: 1, text_y: 84, text_x: 50, text_arch: 70, text_wave: 0, text_angle: 0, text_font: "shrikhand", text_size: 14, text_frame: "halo", text_relief: "pressed", text_style: "solid" }),
+    svg: '<rect x="8" y="20" width="12" height="12" rx="3" class="pic"/><rect x="26" y="20" width="12" height="12" rx="3" class="pic"/><path d="M5 16 Q14 4 23 16" class="ln"/><path d="M23 16 Q32 4 41 16" class="ln"/>' },
+  { id: "band", label: "Word band", sample: "HOPE",
+    set: () => ({ text_layout: "band", text_y: 50, text_x: 50, text_wave: 0, text_font: "bebas", text_size: 12, text_sep: "star", text_gap: 5, text_frame: "halo", text_relief: "pressed", text_style: "solid" }),
+    svg: '<rect x="2" y="4" width="40" height="9" rx="2" class="pic"/><rect x="2" y="27" width="40" height="9" rx="2" class="pic"/><rect x="3" y="18" width="9" height="4" rx="1"/><circle cx="16" cy="20" r="1.6"/><rect x="20" y="18" width="9" height="4" rx="1"/><circle cx="33" cy="20" r="1.6"/><rect x="37" y="18" width="5" height="4" rx="1"/>' },
+  { id: "wavy", label: "Wavy saying", sample: "be still",
+    set: () => ({ text_layout: "band", text_y: 50, text_x: 0, text_wave: 25, text_font: "caveat", text_size: 12, text_sep: "none", text_gap: 14, text_frame: "halo", text_relief: "pressed", text_style: "solid" }),
+    svg: '<path d="M2 20 Q8 12 14 20 T26 20 T38 20 T44 20" class="ln"/>' },
+  { id: "allover", label: "Words all over", sample: "JOY",
+    set: () => ({ text_layout: "allover", text_x: 50, text_wave: 0, text_font: "lilita", text_size: 14, text_sep: "heart", text_gap: 4, text_row_gap: 6, text_frame: "halo", text_relief: "pressed", text_style: "solid" }),
+    svg: '<rect x="2" y="5" width="10" height="4" rx="2"/><rect x="17" y="5" width="10" height="4" rx="2"/><rect x="32" y="5" width="10" height="4" rx="2"/><rect x="9" y="18" width="10" height="4" rx="2"/><rect x="24" y="18" width="10" height="4" rx="2"/><rect x="2" y="31" width="10" height="4" rx="2"/><rect x="17" y="31" width="10" height="4" rx="2"/><rect x="32" y="31" width="10" height="4" rx="2"/>' },
+  { id: "stamp", label: "Maker's stamp", sample: "HANDMADE",
+    set: () => ({ text_layout: "single", text_count: 1, text_y: 8, text_x: 50, text_arch: 0, text_wave: 0, text_angle: 0, text_font: "nunito", text_size: 12, text_frame: "ring", text_relief: "pressed", text_style: "solid" }),
+    svg: '<rect x="4" y="6" width="36" height="20" rx="3" class="pic"/><rect x="13" y="29" width="18" height="8" rx="4" class="ln"/><rect x="17" y="32" width="10" height="2" rx="1"/>' },
+  { id: "side", label: "Up the side", sample: "made with love",
+    set: () => ({ text_layout: "single", text_count: 1, text_y: 50, text_x: 0, text_arch: 0, text_wave: 0, text_angle: 90, text_font: "lilita", text_size: 10, text_frame: "halo", text_relief: "pressed", text_style: "solid" }),
+    svg: '<rect x="10" y="4" width="30" height="32" rx="3" class="pic"/><rect x="3" y="8" width="4" height="24" rx="2"/>' },
+];
+
+function setMany(vals) {
+  Object.assign(S.params, vals);
+  for (const [k, v] of Object.entries(vals)) {
+    const inp = inputs[k];
+    if (!inp) continue;
+    if (inp.type === "checkbox") inp.checked = !!v; else inp.value = v == null ? "" : String(v);
+    inp.classList.remove("invalid");
+  }
+  const k0 = Object.keys(vals)[0];
+  setParam(k0, vals[k0]);
+  syncTextNote();
+}
+
+function textIdeas() {
+  const wrap = el("div", { class: "row wide" });
+  const grid = el("div", { class: "ideas", role: "group", "aria-label": "Text ideas" });
+  for (const idea of TEXT_IDEAS) {
+    const b = el("button", { type: "button", class: "idea" });
+    b.innerHTML = '<svg viewBox="0 0 44 40" aria-hidden="true">' + idea.svg + "</svg>";
+    b.append(el("span", { text: idea.label }));
+    b.onclick = () => {
+      const v = idea.set(S.params);
+      if (!hasText(S.params) || TEXT_IDEAS.some((x) => x.sample === S.params.text)) v.text = idea.sample;
+      setMany(v);
+    };
+    grid.append(b);
+  }
+  wrap.append(el("span", { class: "lbl", text: "Start from an idea" }), grid);
+  return wrap;
+}
+
+function textInput() {
+  const wrap = el("div", { class: "row wide" });
+  const ta = el("textarea", { id: "f-text", rows: 2, maxlength: 60, placeholder: "A name, a date or a saying. Enter starts a new line (3 lines at most)." });
+  ta.value = S.params.text || "";
+  ta.addEventListener("input", () => { setParam("text", ta.value); syncTextNote(); });
+  inputs.text = ta;
+  wrap.append(el("label", { for: "f-text", class: "lbl" }, "Words"), ta);
+  return wrap;
+}
+
+let textNoteEl = null;
+function textSizeNote() {
+  textNoteEl = el("p", { class: "note text-note", role: "status" });
+  syncTextNote();
+  return textNoteEl;
+}
+function syncTextNote() {
+  if (!textNoteEl) return;
+  const p = S.params;
+  const f = FONTS.find((x) => x[0] === p.text_font);
+  if (!hasText(p) || !f) { textNoteEl.textContent = ""; textNoteEl.hidden = true; return; }
+  textNoteEl.hidden = false;
+  const small = p.text_size < f[3];
+  textNoteEl.textContent = small
+    ? f[1] + " needs " + f[3] + " mm or more to keep 1 mm gaps in clay. Make it taller or pick a bolder font."
+    : "Letter height is the height of a capital H.";
+  textNoteEl.classList.toggle("warn", small);
+}
+
 function buildForm() {
   const form = $("params");
   for (const g of GROUPS) {
@@ -297,6 +434,9 @@ function buildForm() {
       if (f.special === "art-source") { body.append(artSource()); continue; }
       if (f.special === "mode") { body.append(modeField()); continue; }
       if (f.special === "solver") { body.append(solverBlock()); continue; }
+      if (f.special === "text-ideas") { body.append(textIdeas()); continue; }
+      if (f.special === "text-input") { body.append(textInput()); continue; }
+      if (f.special === "text-size-note") { body.append(textSizeNote()); continue; }
       let ctl;
       if (f.t === "num") ctl = numField(f);
       else if (f.t === "int") ctl = intField(f);
@@ -356,7 +496,9 @@ async function requestPreview() {
   busy(true);
   try {
     const data = await engine.preview({ ...S.params }, file);
-    if (mine !== S.seq) return;
+    // Show any result newer than the one on screen, so a drag shows each finished step.
+    if (mine <= S.shown) return;
+    S.shown = mine;
     S.last = data;
     applyPreview();
   } catch (e) {
@@ -868,8 +1010,25 @@ async function useUpload(f) {
 $("upload-file").addEventListener("change", (e) => { useUpload(e.target.files[0]); e.target.value = ""; });
 $("style-trace").onclick = () => { setParam("art_style", "trace"); syncStyleUI(); };
 $("style-portrait").onclick = () => { setParam("art_style", "portrait"); syncStyleUI(); };
-$("pt-detail").addEventListener("input", (e) => { $("pt-detail-out").textContent = Number(e.target.value).toFixed(2); });
-$("pt-detail").addEventListener("change", (e) => setParam("sketch_detail", Number(e.target.value)));
+// Redraw while dragging: send a request at most every 120 ms. The engine runs one at a time and
+// keeps only the newest waiting request, so the drawing follows the thumb without piling up.
+let detailTick = null;
+function sendDetail(v) {
+  S.params.sketch_detail = v;
+  readouts();
+  try { localStorage.setItem("roller.params", JSON.stringify(S.params)); } catch (e) { /* ignore */ }
+  clearTimeout(timer);
+  requestPreview();
+}
+$("pt-detail").addEventListener("input", (e) => {
+  $("pt-detail-out").textContent = Number(e.target.value).toFixed(2);
+  if (detailTick) return;
+  detailTick = setTimeout(() => { detailTick = null; sendDetail(Number($("pt-detail").value)); }, 120);
+});
+$("pt-detail").addEventListener("change", (e) => {
+  clearTimeout(detailTick); detailTick = null;
+  if (Number(e.target.value) !== S.params.sketch_detail) sendDetail(Number(e.target.value));
+});
 $("pt-shading").addEventListener("change", (e) => setParam("sketch_shading", e.target.checked));
 $("pt-fit").onclick = async () => {
   if (!S.upload) return;

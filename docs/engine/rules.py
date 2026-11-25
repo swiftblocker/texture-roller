@@ -88,6 +88,7 @@ def evaluate(P, F, dv, val=None, ref=None, per_part=None):
     V["R62"] = (L, P.cnc_rotary_max_length) if P.cnc_rotary_max_length > 0 else None
     V["R64"] = (tri, None)
     out = []
+    grid_tol = F.pitch if (val is None and (P.text or "").strip() and F.pitch > P.pitch_export) else 0.0
     for rid, c in ck.items():
         if rid in V:
             vl = V[rid]
@@ -98,6 +99,11 @@ def evaluate(P, F, dv, val=None, ref=None, per_part=None):
                 lim = c["value"]
             bad = _OPS[c["op"]](v, lim)
             u = UNITS.get(rid, "")
+            if bad and grid_tol and rid in ("R19a", "R19b", "R20", "R21") and not _OPS[c["op"]](v + grid_tol, lim):
+                # lettering on the coarse preview grid: a width within one grid cell of its limit
+                # cannot be told apart from a pass. The export re-measures at pitch_export.
+                out.append(_res(rid, c["action"], f"{rid}: ok on the {_fmt(F.pitch)} mm preview grid ({LABEL.get(rid, 'value')} {_fmt(v)}{u}, limit {c['op']} {_fmt(lim)}{u}); the export measures it again at {_fmt(P.pitch_export)} mm.", v, lim, True))
+                continue
             if bad:
                 msg = f"{rid}: {c['msg']}. {LABEL.get(rid, 'value')} is {_fmt(v)}{u}, limit {c['op']} {_fmt(lim)}{u}."
             else:
@@ -123,6 +129,28 @@ def evaluate(P, F, dv, val=None, ref=None, per_part=None):
     if met["thin_components"]:
         out.append(_res("R26", "WARN", f"R26: {met['thin_components']} feature(s) thinner than {_fmt(2 * P.nozzle)} mm (2 x nozzle) will not print. Thicken or remove them.",
                         met["thin_components"], 2 * P.nozzle))
+    tr = lay.art_report.get("text") if isinstance(lay.art_report, dict) else None
+    if tr:
+        if tr.get("min_size_mm"):
+            out.append(_res("R74", "WARN", f"R74: Letter strokes are {_fmt(tr['stroke_mm'])} mm, under {_fmt(tr['stroke_limit_mm'])} mm. Make the text at least {_fmt(tr['min_size_mm'])} mm tall or pick a bolder font.",
+                            tr["stroke_mm"], tr["stroke_limit_mm"]))
+        if tr.get("kept", 1.0) < 0.85:
+            out.append(_res("R79", "WARN", f"R79: To keep 1 mm clay gaps, {round(100 * (1 - tr['kept']))}% of the letter area was cut away. Make the text bigger or add letter spacing.",
+                            tr["kept"], 0.85))
+        if tr.get("clipped"):
+            out.append(_res("R75", "WARN", "R75: The text runs into the end band or off the roller. Move it toward the middle or make it smaller.", None, None))
+        if tr.get("too_big"):
+            out.append(_res("R76", "WARN", f"R76: The text is {_fmt(tr['width_mm'])} x {_fmt(tr['height_mm'])} mm, bigger than the roller can carry, so it is not drawn. Make it smaller or shorter.", None, None))
+        elif tr.get("overlap"):
+            out.append(_res("R76", "WARN", "R76: The text copies are wider than the space for each one and run into each other. " + (f"Make the text {_fmt(tr['fit_size_mm'])} mm tall or less, or use fewer copies." if tr.get("fit_size_mm") else "Use fewer copies or smaller text."), None, None))
+        if tr.get("contrast", 1.0) < 0.3:
+            out.append(_res("R77", "WARN", "R77: The letters match what is around them and will not show. Add a frame or switch pressed / raised.", tr["contrast"], 0.3))
+        if tr.get("chars_cut"):
+            out.append(_res("R78", "WARN", "R78: Text is cut to the first 60 characters.", None, 60))
+        if tr.get("lines_cut"):
+            out.append(_res("R78", "WARN", f"R78: {tr['lines_cut']} lines typed; only the first 3 are used.", tr["lines_cut"], 3))
+        if tr.get("missing"):
+            out.append(_res("R78", "WARN", "R78: This font has no letter for: " + " ".join(tr["missing"]).encode("ascii", "replace").decode() + ". They print as spaces.", None, None))
     if P.glaze_flag and d < 1.2:
         out.append(_res("R28", "WARN", f"R28: Relief {_fmt(d)} mm is under 1.2 mm and glaze will soften it.", d, 1.2))
     if P.cnc_rotary_max_length > 0 and met["min_recess_width"] is not None and met["min_recess_width"] < 3.175:

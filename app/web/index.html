@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Roller</title>
 <meta name="description" content="Local generator for clay texture rollers: set size, art, relief and core, preview the rolled slab and the roller, export for printing.">
 <link rel="preload" href="fonts/sofia-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -24,6 +24,7 @@
   <span id="engine-note" class="engine-note" hidden role="status"></span>
   <span class="bar-fill"></span>
   <span id="busy" class="busy" aria-live="polite"></span>
+  <span id="bar-export" class="bar-export"></span>
 </header>
 
 <noscript><p class="noscript">This tool needs scripting turned on. It runs locally and sends nothing off this machine.</p></noscript>
@@ -47,23 +48,32 @@
       <canvas id="slab" aria-label="Rolled-out clay slab, light from the upper left"></canvas>
       <div id="slab-empty" class="empty">Waiting for the first preview.</div>
     </div>
+    <dl id="live" class="live" aria-label="Live size readout" aria-live="polite"></dl>
     <dl id="strip" class="strip" aria-label="Derived numbers"></dl>
   </section>
 
   <aside class="side" aria-label="Roller 3D view and rules">
-    <div class="view3d">
-      <canvas id="gl" aria-label="3D roller, drag to orbit"></canvas>
-      <span class="caption view-cap">Drag to orbit, wheel to zoom</span>
-    </div>
-    <div class="rules-head">
-      <h2 class="h2">Rules</h2>
-      <span id="rules-count" class="caption"></span>
-    </div>
-    <ul id="rules" class="rules"></ul>
+    <section class="sec sec-3d" id="sec-3d">
+      <button type="button" class="sec-toggle" id="toggle-3d" aria-expanded="false" aria-controls="view3d">3D roller</button>
+      <div class="view3d" id="view3d">
+        <span id="view-cap" class="caption view-cap">Drag to orbit, wheel to zoom</span>
+      </div>
+    </section>
+    <section class="sec sec-rules" id="sec-rules">
+      <button type="button" class="sec-toggle" id="toggle-rules" aria-expanded="false" aria-controls="rules-body">Rules</button>
+      <div class="sec-body" id="rules-body">
+        <div class="rules-head">
+          <h2 class="h2">Rules</h2>
+          <span id="rules-count" class="caption"></span>
+        </div>
+        <ul id="rules" class="rules"></ul>
+      </div>
+    </section>
     <div class="export">
       <button type="button" id="export" class="btn primary" disabled>Export</button>
       <button type="button" id="strip-btn" class="btn">Export test strip</button>
       <p id="export-note" class="export-note" role="status"></p>
+      <p id="phone-note" class="export-note phone-note">Phone export uses a coarser mesh (0.35 mm) to fit in memory. Use a computer for the full 0.2 mm mesh.</p>
       <div id="export-result" class="export-result"></div>
     </div>
   </aside>

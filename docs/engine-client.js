@@ -12,6 +12,18 @@
  *   solveRepeat(tileWidth)           -> [{diameter,n_around,C,stretch_pct}]
  * All URLs are relative, so a GitHub Pages subpath works. */
 
+/* Phones have far less RAM than a computer, so the export mesh is coarser there. */
+export const PITCH_FULL = 0.2;
+export const PITCH_PHONE = 0.35;
+export function isLowMemory() {
+  try {
+    if (navigator.deviceMemory && navigator.deviceMemory <= 4) return true;
+    const coarse = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+    const small = Math.min(screen.width, screen.height) < 768;
+    return !!(coarse && small);
+  } catch (e) { return false; }
+}
+
 async function probeHttp() {
   try {
     const ctl = new AbortController();
@@ -28,7 +40,23 @@ export async function createEngine(onProgress) {
   const q = new URLSearchParams(location.search);
   let backend = q.get("backend");
   if (backend !== "http" && backend !== "pyodide") backend = (await probeHttp()) ? "http" : "pyodide";
-  return backend === "http" ? httpEngine(onProgress) : pyodideEngine(onProgress);
+  const eng = await (backend === "http" ? httpEngine(onProgress) : pyodideEngine(onProgress));
+  return withPitch(eng);
+}
+
+/* Force the export pitch on low-memory devices for preview (so the triangle count is honest) and export. */
+function withPitch(eng) {
+  const low = isLowMemory();
+  const pitch = low ? PITCH_PHONE : PITCH_FULL;
+  const fix = (p) => (low ? { ...p, pitch_export: PITCH_PHONE } : p);
+  return {
+    ...eng,
+    lowMemory: low,
+    pitchExport: pitch,
+    preview: (p, f) => eng.preview(fix(p), f),
+    exportZip: (p, f) => eng.exportZip(fix(p), f),
+    testStrip: (p) => eng.testStrip(fix(p)),
+  };
 }
 
 /* ---------- http backend ---------- */
@@ -136,11 +164,19 @@ async function pyodideEngine(onProgress) {
   };
 
   let blobUrl = null;
+  let blobUrl3 = null;
   const asDownload = (m, prefix) => {
     const j = JSON.parse(m.json);
     if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
+    if (blobUrl3) { URL.revokeObjectURL(blobUrl3); blobUrl3 = null; }
     if (m.zip && !j.blocked) blobUrl = URL.createObjectURL(new Blob([m.zip], { type: "application/zip" }));
-    return { ...j, href: blobUrl, filename: prefix + "-" + new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14) + ".zip" };
+    if (m.m3 && !j.blocked) blobUrl3 = URL.createObjectURL(new Blob([m.m3], { type: "model/3mf" }));
+    const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+    return {
+      ...j, href: blobUrl, filename: prefix + "-" + stamp + ".zip",
+      href3mf: blobUrl3, filename3mf: prefix + "-" + stamp + ".3mf",
+      zipBytes: m.zip ? m.zip.length : 0, bytes3mf: m.m3 ? m.m3.length : 0,
+    };
   };
 
   return {

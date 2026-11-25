@@ -48,6 +48,18 @@ sys.path.insert(0, "/home/pyodide")
 from engine import api
 
 _zip = None
+_m3 = None
+
+def _pick3mf(z):
+    global _m3
+    _m3 = b""
+    if not z:
+        return
+    zf = zipfile.ZipFile(io.BytesIO(z))
+    for n in zf.namelist():
+        if n.lower().endswith(".3mf"):
+            _m3 = zf.read(n)
+            return
 
 def _dumps(o):
     return json.dumps(o, default=lambda x: x.item() if hasattr(x, "item") else str(x))
@@ -71,7 +83,7 @@ def op_preview(p, u, name):
     return _dumps(api.preview(json.loads(p), _up(u), name))
 
 def op_export(p, u, name):
-    global _zip
+    global _zip, _m3
     params = json.loads(p)
     if hasattr(api, "export_bytes"):
         r = api.export_bytes(params, _up(u), name)
@@ -82,13 +94,15 @@ def op_export(p, u, name):
         z = b"" if r.get("blocked") else _zipdir(d)
         shutil.rmtree(d, ignore_errors=True)
     _zip = bytes(z)
+    _pick3mf(_zip)
     return _dumps({"rules": r.get("rules", []), "blocked": bool(r.get("blocked")), "files": _names(_zip)})
 
 def op_test_strip(p):
-    global _zip
+    global _zip, _m3
     d = tempfile.mkdtemp()
     r = api.test_strip(json.loads(p), d)
     _zip = _zipdir(d)
+    _pick3mf(_zip)
     shutil.rmtree(d, ignore_errors=True)
     return _dumps({"rules": r.get("rules", []), "blocked": bool(r.get("blocked")), "files": _names(_zip)})
 
@@ -156,7 +170,7 @@ self.onmessage = (ev) => {
   if (!py) { post({ type: "result", id: m.id, ok: false, error: "engine not ready" }); return; }
   try {
     const json = run(m);
-    let zip = null;
+    let zip = null, m3 = null;
     if (m.op === "export" || m.op === "test_strip") {
       const proxy = py.globals.get("_zip");
       if (proxy && proxy.toJs) {
@@ -164,8 +178,17 @@ self.onmessage = (ev) => {
         zip = new Uint8Array(u8);
         proxy.destroy();
       }
+      const p3 = py.globals.get("_m3");
+      if (p3 && p3.toJs) {
+        const b = p3.toJs();
+        if (b.length) m3 = new Uint8Array(b);
+        p3.destroy();
+      }
     }
-    post({ type: "result", id: m.id, ok: true, json, zip }, zip ? [zip.buffer] : []);
+    const tr = [];
+    if (zip) tr.push(zip.buffer);
+    if (m3) tr.push(m3.buffer);
+    post({ type: "result", id: m.id, ok: true, json, zip, m3 }, tr);
   } catch (e) {
     post({ type: "result", id: m.id, ok: false, error: String(e && e.message ? e.message : e).split("\n").slice(-3).join(" ") });
   }

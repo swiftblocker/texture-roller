@@ -35,6 +35,10 @@ try {
   if (saved && typeof saved === "object") Object.assign(S.params, saved);
 } catch (e) { /* storage may be unavailable */ }
 
+const MQ_NARROW = window.matchMedia("(max-width: 1023px)");
+const MQ_PHONE = window.matchMedia("(max-width: 767px)");
+const IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
 const $ = (id) => document.getElementById(id);
 const el = (tag, attrs = {}, ...kids) => {
   const n = document.createElement(tag);
@@ -177,7 +181,7 @@ function sizeReadouts() {
   for (const [id, label] of [["C", "Circumference C, mm"], ["rw", "Repeat width, mm"], ["th", "Tile height, mm"], ["rev", "Revolutions per 254 mm"]]) {
     const dd = el("dd", { text: "-" });
     readoutEls[id] = dd;
-    dl.append(el("div", {}, el("dt", { text: label }), dd));
+    dl.append(el("div", { class: "ro-" + id }, el("dt", { text: label }), dd));
   }
   return dl;
 }
@@ -190,19 +194,33 @@ function readouts() {
   const th = S.last && S.last.derived ? S.last.derived.tile_height : null;
   readoutEls.th.textContent = th == null ? "-" : fmt(th, 1);
   readoutEls.rev.textContent = fmt(254 / C, 2);
+  if (liveEls.C) {
+    liveEls.C.textContent = readoutEls.C.textContent;
+    liveEls.rw.textContent = readoutEls.rw.textContent;
+    liveEls.rev.textContent = readoutEls.rev.textContent;
+  }
+}
+const liveEls = {};
+function buildLive() {
+  const dl = $("live");
+  for (const [id, label] of [["C", "C, mm"], ["rw", "Repeat width, mm"], ["rev", "Revs per 254 mm"]]) {
+    const dd = el("dd", { text: "-" });
+    liveEls[id] = dd;
+    dl.append(el("div", {}, el("dt", { text: label }), dd));
+  }
 }
 
 function artSource() {
   const wrap = el("div", { class: "row wide" });
   const sel = el("select", { id: "f-art" });
-  sel.append(el("option", { value: "upload", text: "Upload SVG or PNG" }));
+  sel.append(el("option", { value: "upload", text: "Upload SVG, PNG or JPEG" }));
   inputs.art_source = sel;
-  const file = el("input", { type: "file", id: "f-file", accept: ".svg,.png,image/svg+xml,image/png", hidden: true });
+  const file = el("input", { type: "file", id: "f-file", accept: "image/png,image/jpeg,image/svg+xml,.svg", hidden: true });
   const name = el("p", { class: "upload-name" });
   const sync = () => {
     const up = sel.value === "upload";
     file.hidden = !up;
-    name.textContent = up ? (S.upload ? S.upload.name : "No file chosen. SVG is clean-up only, PNG is traced.") : "";
+    name.textContent = up ? (S.upload ? S.upload.name : "No file chosen. SVG is clean-up only, PNG and JPEG are traced.") : "";
   };
   sel.addEventListener("change", () => {
     if (sel.value === "upload") setParam("art_source", "upload");
@@ -292,7 +310,7 @@ function buildForm() {
       rowsByKey[f.k] = { row, f };
       body.append(row);
     }
-    form.append(el("details", { class: "group", open: g.open }, el("summary", { text: g.name }), body));
+    form.append(el("details", { class: "group", open: MQ_PHONE.matches ? g.name === "Size" : g.open }, el("summary", { text: g.name }), body));
   }
   const reset = el("div", { class: "group-body" }, el("button", { type: "button", class: "btn", text: "Reset to the default part", onclick: () => {
     S.params = { ...DEFAULTS }; S.upload = null;
@@ -332,7 +350,7 @@ function busy(on) {
 async function requestPreview() {
   if (document.querySelector("input.invalid")) return;
   const file = S.params.art_source === "upload" ? S.upload : null;
-  if (S.params.art_source === "upload" && !file) { showEmpty("Choose an SVG or PNG to preview.", false); return; }
+  if (S.params.art_source === "upload" && !file) { showEmpty("Choose an SVG, PNG or JPEG to preview.", false); return; }
   const mine = ++S.seq;
   busy(true);
   try {
@@ -406,13 +424,54 @@ function renderRules() {
   }
   if (!rules.length) ul.append(el("li", { class: "rules-empty", text: "No rules reported." }));
   $("rules-count").textContent = counts.BLOCK + " block, " + counts.WARN + " warn, " + counts.INFO + " info";
+  $("toggle-rules").textContent = "Rules: " + counts.BLOCK + " block, " + counts.WARN + " warn";
   const blockers = rules.filter((r) => r.action === "BLOCK").map((r) => r.id);
   const can = S.last.can_export && blockers.length === 0;
+  S.blockers = blockers;
+  S.canExport = can;
+  $("sec-rules").classList.toggle("has-block", blockers.length > 0);
+  if (blockers.length && !S.hadBlock && MQ_NARROW.matches) setOpen("rules", true);
+  S.hadBlock = blockers.length > 0;
   $("export").disabled = !can;
+  exportLabel();
   const note = $("export-note");
   note.textContent = can ? "No blocking rules." : "Export is blocked by " + blockers.join(", ") + ".";
   note.classList.toggle("block", !can);
 }
+
+/* The Export button shows the blocking rule id on narrow screens, where it lives in the sticky bar. */
+function exportLabel() {
+  const b = $("export");
+  const blocked = S.last && S.blockers && S.blockers.length > 0;
+  b.textContent = MQ_NARROW.matches && blocked
+    ? "Blocked " + S.blockers.slice(0, 2).join(", ") + (S.blockers.length > 2 ? " +" + (S.blockers.length - 2) : "")
+    : "Export";
+}
+
+/* ---------- narrow layout: export button placement, collapsible sections ---------- */
+const sec = {
+  three: { el: $("sec-3d"), btn: $("toggle-3d"), open: true },
+  rules: { el: $("sec-rules"), btn: $("toggle-rules"), open: true },
+};
+function setOpen(name, open) {
+  const s = sec[name === "3d" ? "three" : name];
+  s.open = open;
+  s.el.classList.toggle("is-collapsed", !open);
+  s.btn.setAttribute("aria-expanded", String(open));
+  if (s === sec.three) syncGL();
+}
+function applyMode() {
+  const narrow = MQ_NARROW.matches;
+  if (narrow) $("bar-export").append($("export"));
+  else document.querySelector(".export").prepend($("export"));
+  exportLabel();
+  if (!narrow) { setOpen("3d", true); setOpen("rules", true); }
+  else if (MQ_PHONE.matches) { setOpen("3d", false); setOpen("rules", !!(S.blockers && S.blockers.length)); }
+  else { setOpen("3d", true); setOpen("rules", true); }
+  $("view-cap").textContent = window.matchMedia("(pointer: coarse)").matches ? "Drag to orbit, pinch to zoom" : "Drag to orbit, wheel to zoom";
+}
+sec.three.btn.onclick = () => setOpen("3d", !sec.three.open);
+sec.rules.btn.onclick = () => setOpen("rules", !sec.rules.open);
 
 /* ---------- colours from tokens ---------- */
 const probe = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
@@ -484,7 +543,7 @@ function revolutionCanvas() {
 function drawSlab() {
   const cv = $("slab");
   const wrap = $("slab-wrap");
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
   const W = Math.max(10, wrap.clientWidth), H = Math.max(10, wrap.clientHeight);
   if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
   const ctx = cv.getContext("2d");
@@ -549,9 +608,26 @@ function setSize(fired) {
 
 /* ---------- 3D roller ---------- */
 let gl = null;
+/* The renderer exists only while the 3D view is on screen. On narrow screens it is created when the
+ * section opens and disposed when it closes, so a phone does not hold a WebGL context it cannot see. */
+function syncGL() {
+  const want = !MQ_NARROW.matches || sec.three.open;
+  if (want && !gl) { initGL(); if (S.last) buildRoller(); }
+  else if (!want && gl) disposeGL();
+}
+function disposeGL() {
+  const g = gl; gl = null;
+  g.observer.disconnect();
+  g.controls.dispose();
+  if (g.mesh) { g.scene.remove(g.mesh); g.mesh.geometry.dispose(); g.mesh.material.forEach((m) => m.dispose()); }
+  g.renderer.dispose();
+  g.renderer.forceContextLoss();
+  g.canvas.remove();
+}
 function initGL() {
-  const canvas = $("gl");
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+  const canvas = el("canvas", { id: "gl", "aria-label": "3D roller, drag to orbit" });
+  $("view3d").prepend(canvas);
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: !engine.lowMemory, preserveDrawingBuffer: !engine.lowMemory });
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   const scene = new THREE.Scene();
   const bg = rgb("--stage-bg");
@@ -569,8 +645,9 @@ function initGL() {
     const w = canvas.parentElement.clientWidth, h = canvas.parentElement.clientHeight;
     renderer.setSize(w, h, false); cam.aspect = w / h; cam.updateProjectionMatrix(); render();
   };
-  new ResizeObserver(resize).observe(canvas.parentElement);
-  gl = { renderer, scene, cam, controls, render, mesh: null, fitted: false };
+  const observer = new ResizeObserver(resize);
+  observer.observe(canvas.parentElement);
+  gl = { canvas, observer, renderer, scene, cam, controls, render, mesh: null, fitted: false };
   resize();
 }
 
@@ -643,10 +720,15 @@ function buildRoller() {
 
 /* ---------- export ---------- */
 let engine = null;
+const mb = (n) => (n >= 1e6 ? fmt(n / 1e6, 1) + " MB" : Math.max(1, Math.round(n / 1e3)) + " KB");
+function dlLink(href, name, text, primary) {
+  return el("a", { href, download: name, target: IOS ? "_blank" : null, rel: IOS ? "noopener" : null, class: primary ? "primary" : null, text });
+}
 async function doExport(kind) {
   const res = $("export-result");
   res.replaceChildren(el("span", { text: "Exporting. The browser stays usable." }));
   $("export").disabled = true; $("strip-btn").disabled = true;
+  if (MQ_NARROW.matches) document.querySelector(".export").scrollIntoView({ block: "start" });
   try {
     const file = S.params.art_source === "upload" ? S.upload : null;
     const j = kind === "strip" ? await engine.testStrip({ ...S.params }) : await engine.exportZip({ ...S.params }, file);
@@ -655,7 +737,14 @@ async function doExport(kind) {
       const ids = (j.rules || []).filter((x) => x.action === "BLOCK").map((x) => x.id);
       res.append(el("span", { class: "err", text: "Not exported. Blocked by " + (ids.join(", ") || "a rule") + "." }));
     } else {
-      res.append(el("a", { href: j.href, download: j.filename, text: (kind === "strip" ? "Download test strip zip" : "Download zip") + " (" + (j.files || []).length + " files)" }));
+      const nFiles = (j.files || []).length;
+      const zipText = (kind === "strip" ? "Download test strip zip" : "Download zip") + " (" + nFiles + " files" + (j.zipBytes ? ", " + mb(j.zipBytes) : "") + ")";
+      if (engine.lowMemory && j.href3mf) {
+        res.append(dlLink(j.href3mf, j.filename3mf, "Download 3MF (" + mb(j.bytes3mf) + ")", true));
+        res.append(dlLink(j.href, j.filename, zipText, false));
+      } else {
+        res.append(dlLink(j.href, j.filename, zipText, false));
+      }
       const ul = el("ul");
       for (const f of j.files || []) ul.append(el("li", { text: f }));
       res.append(ul);
@@ -692,7 +781,12 @@ $("boot-retry").onclick = () => location.reload();
 if (!(await boot())) throw new Error("engine did not start");
 if (engine.note) { const n = $("engine-note"); n.hidden = false; n.textContent = engine.note; }
 buildForm();
-initGL();
+buildLive();
+readouts();
+$("phone-note").classList.toggle("on", !!engine.lowMemory);
+applyMode();
+MQ_NARROW.addEventListener("change", applyMode);
+MQ_PHONE.addEventListener("change", applyMode);
 $("size-wet").onclick = () => setSize(false);
 $("size-fired").onclick = () => setSize(true);
 $("glaze-pool").onchange = (e) => { S.glaze = e.target.checked; imageCache = null; if (S.last) drawSlab(); };
@@ -700,9 +794,9 @@ $("random-start").onclick = () => {
   if (!S.last) return;
   const C = S.last.derived.C;
   S.passes = 3; S.phases = [0, 1, 2].map(() => Math.random() * C);
-  $("one-pass").hidden = false; drawSlab();
+  $("one-pass").hidden = false; $("slab-wrap").classList.add("multi"); drawSlab();
 };
-$("one-pass").onclick = () => { S.passes = 1; S.phases = [0, 0, 0]; $("one-pass").hidden = true; drawSlab(); };
+$("one-pass").onclick = () => { S.passes = 1; S.phases = [0, 0, 0]; $("one-pass").hidden = true; $("slab-wrap").classList.remove("multi"); drawSlab(); };
 $("export").onclick = () => doExport("full");
 $("strip-btn").onclick = () => doExport("strip");
 new ResizeObserver(() => drawSlab()).observe($("slab-wrap"));

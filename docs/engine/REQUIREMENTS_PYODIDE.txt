@@ -1,0 +1,7 @@
+numpy
+scipy
+scikit-image
+Pillow
+svgelements
+potracer
+trimesh

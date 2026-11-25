@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roller</title>
+<meta name="description" content="Local generator for clay texture rollers: set size, art, relief and core, preview the rolled slab and the roller, export for printing.">
+<link rel="preload" href="fonts/sofia-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="boot" class="boot" role="status" aria-live="polite">
+  <div class="boot-card">
+    <h1 class="wordmark">Roller</h1>
+    <p id="boot-text" class="boot-text">Starting</p>
+    <progress id="boot-bar" class="boot-bar" max="1" value="0" hidden></progress>
+    <p class="note">First visit downloads the Python engine once, about 60 MB. After that it runs offline.</p>
+    <button type="button" id="boot-retry" class="btn" hidden>Try again</button>
+  </div>
+</div>
+<header class="bar">
+  <span class="wordmark">Roller</span>
+  <span class="bar-sub">Clay texture roller generator</span>
+  <span id="engine-note" class="engine-note" hidden role="status"></span>
+  <span class="bar-fill"></span>
+  <span id="busy" class="busy" aria-live="polite"></span>
+</header>
+
+<noscript><p class="noscript">This tool needs scripting turned on. It runs locally and sends nothing off this machine.</p></noscript>
+
+<main class="shell">
+  <form id="params" class="panel params" autocomplete="off" aria-label="Roller parameters"></form>
+
+  <section class="centre" aria-label="Clay slab preview">
+    <div class="toolbar" role="toolbar" aria-label="Slab view">
+      <div class="seg" role="group" aria-label="Size basis">
+        <button type="button" id="size-wet" aria-pressed="true">Wet size</button>
+        <button type="button" id="size-fired" aria-pressed="false">Fired size</button>
+      </div>
+      <label class="check"><input type="checkbox" id="glaze-pool"> Glaze pooling</label>
+      <button type="button" id="random-start" class="btn">Random start, 3 passes</button>
+      <button type="button" id="one-pass" class="btn" hidden>Single pass</button>
+      <span class="tool-fill"></span>
+      <span id="slab-caption" class="caption"></span>
+    </div>
+    <div id="slab-wrap" class="slab-wrap">
+      <canvas id="slab" aria-label="Rolled-out clay slab, light from the upper left"></canvas>
+      <div id="slab-empty" class="empty">Waiting for the first preview.</div>
+    </div>
+    <dl id="strip" class="strip" aria-label="Derived numbers"></dl>
+  </section>
+
+  <aside class="side" aria-label="Roller 3D view and rules">
+    <div class="view3d">
+      <canvas id="gl" aria-label="3D roller, drag to orbit"></canvas>
+      <span class="caption view-cap">Drag to orbit, wheel to zoom</span>
+    </div>
+    <div class="rules-head">
+      <h2 class="h2">Rules</h2>
+      <span id="rules-count" class="caption"></span>
+    </div>
+    <ul id="rules" class="rules"></ul>
+    <div class="export">
+      <button type="button" id="export" class="btn primary" disabled>Export</button>
+      <button type="button" id="strip-btn" class="btn">Export test strip</button>
+      <p id="export-note" class="export-note" role="status"></p>
+      <div id="export-result" class="export-result"></div>
+    </div>
+  </aside>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

@@ -291,6 +291,7 @@ input[type="checkbox"] { accent-color: var(--color-accent); width: 16px; height:
   .toolbar .check:has(input:checked) { background: var(--color-well); box-shadow: inset 0 -3px 0 var(--color-accent); }
   .toolbar .tool-fill { display: none; }
   .toolbar #one-pass { grid-column: 1 / -1; }
+  .toolbar #upload-art { grid-column: 1 / -1; }
   .toolbar .caption { grid-column: 1 / -1; padding: 8px 12px; }
   .toolbar .caption:empty { display: none; }
   .slab-wrap { height: 120vw; height: clamp(320px, 120vw, 72svh); }

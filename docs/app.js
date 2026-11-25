@@ -790,6 +790,21 @@ MQ_PHONE.addEventListener("change", applyMode);
 $("size-wet").onclick = () => setSize(false);
 $("size-fired").onclick = () => setSize(true);
 $("glaze-pool").onchange = (e) => { S.glaze = e.target.checked; imageCache = null; if (S.last) drawSlab(); };
+/* Upload picture: switch the Art source to upload and open the file picker in one tap. */
+const uploadBtn = $("upload-art");
+const syncUploadBtn = () => {
+  const f = S.params.art_source === "upload" && S.upload;
+  uploadBtn.textContent = f ? "Change picture" : "Upload picture";
+  uploadBtn.title = f ? S.upload.name : "SVG, PNG or JPEG. PNG and JPEG are traced to black and white.";
+};
+uploadBtn.onclick = () => {
+  const sel = $("f-art"), file = $("f-file");
+  if (sel.value !== "upload") { sel.value = "upload"; sel.dispatchEvent(new Event("change")); }
+  file.hidden = false;
+  file.click();
+};
+$("f-file").addEventListener("change", syncUploadBtn);
+$("f-art").addEventListener("change", syncUploadBtn);
 $("random-start").onclick = () => {
   if (!S.last) return;
   const C = S.last.derived.C;

@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "pottery-roller/app/web/index.html"
+        ],
+        "createdAt": "2026-11-25T01:44:46.391Z",
+        "reason": "Claude: the 3 hits are .seg (button group, buttons carry own padding), .slab-wrap and .view3d (full-bleed canvas viewports, intentionally edge to edge); checked 2026-11-24"
+      }
+    ]
+  }
+}

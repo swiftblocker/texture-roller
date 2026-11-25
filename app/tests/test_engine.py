@@ -336,3 +336,90 @@ def test_no_heavy_deps_in_core_path():
         "print('OK')\n")
     out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=300)
     assert out.returncode == 0 and "OK" in out.stdout, out.stderr[-2000:]
+
+
+# ---------------------------------------------------------------- upload scale / shift
+_UP = {"art_source": "upload", "n_around": 1, "bands_on": False, "end_chamfer": 0.0, "length": 100.0,
+       "diameter": 40.0, "bore_preset": "none", "seam_method": "tile", "mirror": True}
+
+
+def _sq_svg():
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect x="30" y="30" width="40" '
+            'height="40" fill="#000"/></svg>').encode()
+
+
+def _tile_box(over):
+    P, F = field({**_UP, "spacing": 0.0, **over}, _sq_svg(), "s.svg")
+    K = api.clay_depth(F) > 0.75
+    ys, xs = np.nonzero(K)
+    return K, xs.min(), xs.max(), ys.min(), ys.max(), K.shape
+
+
+def test_art_defaults_byte_identical():
+    up = _sq_svg()
+    for over, u in (({"art_source": "upload", "n_around": 2}, up), ({"n_around": 3}, None)):
+        a = api.preview({**FAST, **over}, u, "s.svg")["clay"]["data_b64"]
+        b = api.preview({**FAST, **over, "art_scale": 100, "art_shift_x": 0, "art_shift_y": 0}, u, "s.svg")["clay"]["data_b64"]
+        assert a == b
+
+
+def test_art_scale_halves_box():
+    _, x0, x1, y0, y1, _s = _tile_box({})
+    _, a0, a1, b0, b1, _s = _tile_box({"art_scale": 50})
+    assert (a1 - a0) == pytest.approx((x1 - x0) / 2, rel=0.08)
+    assert (b1 - b0) == pytest.approx((y1 - y0) / 2, rel=0.08)
+    assert (a0 + a1) / 2 == pytest.approx((x0 + x1) / 2, abs=3)
+
+
+def test_art_shift_x_quarter_cell():
+    _, x0, x1, _, _, sh = _tile_box({"art_scale": 50})
+    _, a0, a1, _, _, _ = _tile_box({"art_scale": 50, "art_shift_x": 0.25})
+    N = sh[1]
+    assert ((a0 + a1) / 2 - (x0 + x1) / 2) % N == pytest.approx(0.25 * N, abs=3)
+
+
+def test_art_params_clamped():
+    assert Params.from_dict({"art_scale": 9999, "art_shift_x": 5, "art_shift_y": -5}).art_scale == 400.0
+    p = Params.from_dict({"art_scale": 1, "art_shift_x": 5, "art_shift_y": -5})
+    assert (p.art_scale, p.art_shift_x, p.art_shift_y) == (10.0, 1.0, -1.0)
+
+
+def test_art_params_reach_export():
+    r = api.export_bytes({**FAST, **_UP, "n_around": 2, "art_scale": 50, "art_shift_x": 0.25}, _sq_svg(), "s.svg")
+    side = json.loads(zipfile.ZipFile(io.BytesIO(r["zip"])).read("roller.json"))
+    assert side["params"].get("art_scale") == 50.0 or r.get("blocked") is not None
+
+
+# ---------------------------------------------------------------- art_fit
+def _fit_box(over):
+    P, F = field({**_UP, "spacing": 0.0, "art_fit": True, **over}, _sq_svg(), "s.svg")
+    K = api.clay_depth(F) > 0.75
+    ys, xs = np.nonzero(K)
+    pz = F.lay.pz
+    return (xs.max() - xs.min() + 1) * F.lay.pt, (ys.max() - ys.min() + 1) * pz, (xs.min() + xs.max()) / 2 / K.shape[1], (ys.min() + ys.max()) / 2 / K.shape[0]
+
+
+def test_art_fit_default_off_byte_identical():
+    for over, u in (({"art_source": "upload", "n_around": 2}, _sq_svg()), ({"n_around": 3}, None)):
+        a = api.preview({**FAST, **over}, u, "s.svg")["clay"]["data_b64"]
+        b = api.preview({**FAST, **over, "art_fit": False}, u, "s.svg")["clay"]["data_b64"]
+        assert a == b
+
+
+def test_art_fit_height_limited_halves_with_length():
+    w1, h1, cx1, cy1 = _fit_box({"length": 100.0, "diameter": 100.0})
+    w2, h2, cx2, cy2 = _fit_box({"length": 50.0, "diameter": 100.0})
+    assert h2 == pytest.approx(h1 / 2, rel=0.08)
+    assert w2 == pytest.approx(w1 / 2, rel=0.08)
+    assert abs(cy2 - 0.5) < 0.03 and abs(cx2 - 0.5) < 0.03
+
+
+def test_art_fit_width_limited_ignores_length():
+    w1, h1, _, _ = _fit_box({"length": 300.0, "diameter": 40.0})
+    w2, h2, _, _ = _fit_box({"length": 200.0, "diameter": 40.0})
+    assert w1 == pytest.approx(w2, rel=0.03) and h1 == pytest.approx(h2, rel=0.03)
+
+
+def test_art_fit_derived_tile_height_is_usable_length():
+    r = api.preview({**FAST, **_UP, "art_fit": True, "length": 100.0, "band": 3.0, "bands_on": True}, _sq_svg(), "s.svg")
+    assert r["derived"]["tile_height"] == pytest.approx(94.0, abs=0.01)

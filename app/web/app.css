@@ -247,6 +247,8 @@ input[type="checkbox"] { accent-color: var(--color-accent); width: 16px; height:
 .live, .bar-export, .phone-note { display: none; }
 .phone-note.on { display: block; }
 .slab-wrap canvas { touch-action: pan-y; }
+.slab-wrap.movable canvas { touch-action: none; cursor: grab; }
+.slab-wrap.movable.grabbing canvas { cursor: grabbing; }
 @media (min-width: 1024px) and (max-width: 1279px) {
   .shell { grid-template-columns: 300px minmax(0, 1fr) 320px; }
   .strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }

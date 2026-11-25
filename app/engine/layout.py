@@ -74,7 +74,21 @@ def build(P, art, pitch, os=OS) -> Layout:
     tile_h = art_h + sp
     band = P.band_eff
     Aav = max(L - 2 * band, 1e-6)
-    if P.n_along:
+    fit = P.art_fit and P.art_source == "upload"
+    fit_ox = fit_oy = None
+    if fit:
+        # whole picture inside one cell: keep the width fit, shrink (never grow) so the height fits the
+        # usable length; one tile along the roller, art centred. Wins over an explicit n_along.
+        kk = min(1.0, max(Aav - sp, 1e-6) / max(art_h, 1e-9))
+        sx, sy = sx * kk, sy * kk
+        tile_h = Aav
+        fit_ox = (cell_w - fw * sx) / 2.0
+        fit_oy = (tile_h - fh * sy) / 2.0
+    if fit:
+        n_along = 1.0
+        Aext = Aav
+        y0 = band
+    elif P.n_along:
         n_along = float(P.n_along)
         Aext = n_along * tile_h
         y0 = band + (Aav - Aext) / 2.0
@@ -88,8 +102,16 @@ def build(P, art, pitch, os=OS) -> Layout:
     ps = max(pitch / os / 2.0, math.sqrt(cell_w * tile_h / 14e6))
     nx = max(2, int(round(cell_w / ps)))
     ny = max(2, int(round(tile_h / ps)))
+    ox = oy = sp / 2.0
+    if fit:
+        ox, oy = fit_ox, fit_oy
+    if P.art_source == "upload" and (P.art_scale != 100.0 or P.art_shift_x or P.art_shift_y):
+        k = P.art_scale / 100.0
+        ox = cell_w / 2.0 + k * (ox - cell_w / 2.0) + P.art_shift_x * cell_w
+        oy = tile_h / 2.0 + k * (oy - tile_h / 2.0) + P.art_shift_y * tile_h
+        sx, sy = sx * k, sy * k
     polys, rep = a.flatten((sx + sy) / 2.0)
-    tile = artmod.raster_polys(polys, sx, sy, fx0, fy0, sp / 2.0, sp / 2.0, ny, nx, (cell_w / nx, tile_h / ny))
+    tile = artmod.raster_polys(polys, sx, sy, fx0, fy0, ox, oy, ny, nx, (cell_w / nx, tile_h / ny))
     N2, M2 = N * os, (M - 1) * os + 1
     x2 = np.arange(N2) * (C / N2)
     z2 = np.arange(M2) * (L / (M2 - 1))

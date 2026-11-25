@@ -44,6 +44,9 @@
       <label class="slider pt" id="pt-detail-wrap" hidden><span class="lbl">Detail</span><input type="range" id="pt-detail" min="0" max="1" step="0.05" value="0.5" aria-label="Detail"><output id="pt-detail-out" class="unit">0.50</output></label>
       <label class="check pt" id="pt-shading-wrap" hidden><input type="checkbox" id="pt-shading" checked> Shading</label>
       <button type="button" id="pt-fit" class="btn pt" hidden>Fit roller to this face</button>
+      <label class="slider" id="art-size-wrap" hidden><span class="lbl">Size</span><input type="range" id="art-size" min="25" max="300" step="5" value="100" aria-label="Picture size in percent"><output id="art-size-out" class="unit">100%</output></label>
+      <label class="check" id="art-fit-wrap" hidden><input type="checkbox" id="art-fit"> Fit picture to roller</label>
+      <button type="button" id="art-reset" class="btn" hidden>Reset position</button>
       <span id="pt-note" class="caption pt" role="status" hidden></span>
       <div class="seg" role="group" aria-label="Size basis">
         <button type="button" id="size-wet" aria-pressed="true">Wet size</button>
@@ -56,7 +59,7 @@
       <span id="slab-caption" class="caption"></span>
     </div>
     <div id="slab-wrap" class="slab-wrap">
-      <canvas id="slab" aria-label="Rolled-out clay slab, light from the upper left"></canvas>
+      <canvas id="slab" tabindex="-1" aria-label="Rolled-out clay slab, light from the upper left. With an uploaded picture: drag to move it, mouse wheel or plus and minus to resize, arrow keys to nudge, shift plus arrow for bigger steps."></canvas>
       <div id="slab-empty" class="empty">Waiting for the first preview.</div>
     </div>
     <dl id="live" class="live" aria-label="Live size readout" aria-live="polite"></dl>

@@ -34,6 +34,10 @@ class Params:
     art_style: str = "trace"
     sketch_detail: float = 0.5
     sketch_shading: bool = True
+    art_scale: float = 100.0
+    art_shift_x: float = 0.0
+    art_shift_y: float = 0.0
+    art_fit: bool = False
     tile_width_mm: float | None = None
     n_around: float = 3
     n_along: float | None = None
@@ -117,7 +121,7 @@ class Params:
             if isinstance(v, float) and not math.isfinite(v):
                 raise ParamError(f"parameter {f.name} is not finite")
             setattr(p, f.name, v)
-        _lim = {"text_size": (3.0, 120.0), "text_count": (1, 24), "text_x": (0.0, 100.0), "text_y": (0.0, 100.0),
+        _lim = {"art_scale": (10.0, 400.0), "art_shift_x": (-1.0, 1.0), "art_shift_y": (-1.0, 1.0), "text_size": (3.0, 120.0), "text_count": (1, 24), "text_x": (0.0, 100.0), "text_y": (0.0, 100.0),
                 "text_angle": (-180.0, 180.0), "text_arch": (-300.0, 300.0), "text_wave": (0.0, 60.0),
                 "text_track": (-20.0, 80.0), "text_halo": (0.0, 10.0), "text_gap": (0.0, 100.0), "text_row_gap": (0.0, 100.0)}
         for k, (lo, hi) in _lim.items():

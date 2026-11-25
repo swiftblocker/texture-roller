@@ -7,6 +7,7 @@ const DEFAULTS = {
   diameter: 45.0, length: 250.0,
   art_source: "pattern:waves",
   art_style: "trace", sketch_detail: 0.5, sketch_shading: true,
+  art_scale: 100, art_shift_x: 0, art_shift_y: 0, art_fit: false,
   tile_width_mm: null, n_around: 3, n_along: null,
   offset: "none", offset_fraction: 0.5, rotation: 0, mirror: true, invert: false, spacing: 0.0,
   depth: 1.5, draft_deg: 15.0, edge_round: 0.4,
@@ -509,11 +510,13 @@ async function requestPreview() {
 
 function showEmpty(msg, isErr) {
   const e = $("slab-empty");
+  S.pend = null;
   e.textContent = msg; e.hidden = false; e.classList.toggle("err", !!isErr);
 }
 
 function applyPreview() {
   const d = S.last;
+  S.pend = null;
   $("slab-empty").hidden = true;
   readouts();
   renderStrip();
@@ -632,6 +635,7 @@ function rgb(name) {
 
 /* ---------- slab ---------- */
 let imageCache = null;
+let slabG = null;   // last slab geometry in CSS px: revolution size and mm sizes
 function b64bytes(b64) {
   const bin = atob(b64);
   const out = new Uint8Array(bin.length);
@@ -702,6 +706,8 @@ function drawSlab() {
   const margin = 30, gap = 14, passes = S.passes;
   const s = Math.min((W - 24) / (C * 1.2), (H - 2 * margin - gap * (passes - 1)) / (passes * L));
   const revW = C * shrink * s, revH = L * shrink * s;
+  slabG = { revW, revH, C, L };
+  const dg = S.drag || S.pend, ddx = dg ? dg.dx : 0, ddy = dg ? dg.dy : 0;
   const rev = revolutionCanvas();
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
   const seamCol = css("--color-seam"), ink = css("--color-ink-2");
@@ -712,9 +718,9 @@ function drawSlab() {
     const phase = (S.phases[p] / C) * revW;
     ctx.save();
     ctx.beginPath(); ctx.rect(0, y0, W, revH); ctx.clip();
-    let x = -phase;
+    let x = -phase + ddx;
     while (x > 0) x -= revW;
-    for (; x < W; x += revW) ctx.drawImage(rev, x, y0, revW + 0.5, revH);
+    for (; x < W; x += revW) ctx.drawImage(rev, x, y0 + ddy, revW + 0.5, revH);
     // seam markers
     ctx.strokeStyle = seamCol; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
     for (x = -phase; x < W; x += revW) {
@@ -984,6 +990,7 @@ function syncStyleUI() {
   const portrait = up && S.params.art_style === "portrait";
   const group = up && S.params.art_style === "group";
   $("art-style").hidden = !up;
+  syncArtUI();
   $("style-trace").setAttribute("aria-pressed", String(!portrait && !group));
   $("style-portrait").setAttribute("aria-pressed", String(portrait));
   $("style-group").setAttribute("aria-pressed", String(group));
@@ -1007,7 +1014,10 @@ async function useUpload(f) {
   if (!f) return;
   const photo = await looksLikePhoto(f);
   S.upload = await toEngineFile(f);
+  S.params.art_scale = 100; S.params.art_shift_x = 0; S.params.art_shift_y = 0;
   S.params.art_style = photo ? "portrait" : "trace";
+  S.fitTouched = false;
+  S.params.art_fit = photo;
   S.last = null;
   const sel = $("f-art");
   sel.value = "upload";
@@ -1017,11 +1027,16 @@ async function useUpload(f) {
   syncStyleUI();
 }
 $("upload-file").addEventListener("change", (e) => { useUpload(e.target.files[0]); e.target.value = ""; });
-$("style-trace").onclick = () => { setParam("art_style", "trace"); syncStyleUI(); };
-$("style-portrait").onclick = () => { setParam("art_style", "portrait"); syncStyleUI(); };
+// Fit-to-roller follows the style (on for photos and groups) until the user touches the checkbox for this picture.
+const autoFit = (style) => { if (!S.fitTouched) S.params.art_fit = style !== "trace"; };
+$("art-fit").addEventListener("change", (e) => { S.fitTouched = true; setParam("art_fit", e.target.checked); });
+$("style-trace").onclick = () => { autoFit("trace"); setParam("art_style", "trace"); syncStyleUI(); };
+$("style-portrait").onclick = () => { autoFit("portrait"); setParam("art_style", "portrait"); syncStyleUI(); };
 // Group photo: the whole group goes once round the roller at full length, so fit it straight away
 $("style-group").onclick = () => {
   S.params.art_style = "group";
+  autoFit("group");
+  setParam("art_fit", S.params.art_fit);
   syncStyleUI();
   $("pt-note").hidden = false;
   $("pt-note").textContent = "Finding faces. The first group photo loads the face finder (11 MB).";
@@ -1066,6 +1081,99 @@ $("pt-fit").onclick = async () => {
   } finally { b.disabled = false; }
 };
 $("f-file").addEventListener("change", syncUploadBtn);
+
+/* ---------- move and size the uploaded picture ---------- */
+const ART_MIN = 25, ART_MAX = 300;
+const artActive = () => S.params.art_source === "upload" && !!S.upload;
+const clampN = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+function syncArtUI() {
+  const up = artActive();
+  for (const id of ["art-size-wrap", "art-reset", "art-fit-wrap"]) $(id).hidden = !up;
+  const sc = clampN(Math.round(Number(S.params.art_scale) || 100), ART_MIN, ART_MAX);
+  $("art-fit").checked = !!S.params.art_fit;
+  $("art-size").value = sc;
+  $("art-size-out").textContent = sc + "%";
+  $("slab-wrap").classList.toggle("movable", up);
+  $("slab").tabIndex = up ? 0 : -1;
+}
+let artTick = null;
+function sendArt() {
+  try { localStorage.setItem("roller.params", JSON.stringify(S.params)); } catch (e) { /* ignore */ }
+  clearTimeout(timer);
+  requestPreview();
+}
+/* Change size and/or shift. Sends a preview at most every 120 ms while it keeps changing. */
+function setArt(p, now) {
+  if (p.scale != null) S.params.art_scale = clampN(Math.round(p.scale), ART_MIN, ART_MAX);
+  if (p.x != null) S.params.art_shift_x = clampN(+p.x.toFixed(4), -1, 1);
+  if (p.y != null) S.params.art_shift_y = clampN(+p.y.toFixed(4), -1, 1);
+  syncArtUI();
+  if (now) { clearTimeout(artTick); artTick = null; sendArt(); return; }
+  if (artTick) return;
+  artTick = setTimeout(() => { artTick = null; sendArt(); }, 120);
+}
+$("art-size").addEventListener("input", (e) => {
+  $("art-size-out").textContent = e.target.value + "%";
+  setArt({ scale: Number(e.target.value) });
+});
+$("art-size").addEventListener("change", (e) => setArt({ scale: Number(e.target.value) }, true));
+$("art-reset").onclick = () => setArt({ scale: 100, x: 0, y: 0 }, true);
+// Screen direction to shift direction: with Mirror off the clay shows the art flipped, so left-right reverses.
+const artSignX = () => (S.params.mirror ? 1 : -1);
+function dragToShift(dx, dy) {
+  if (!slabG || !S.last) return { x: S.params.art_shift_x, y: S.params.art_shift_y };
+  const n = Math.max(1, Math.round(S.params.n_around));
+  const th = (S.last.derived && S.last.derived.tile_height) || S.params.length;
+  const cellPx = slabG.revW / n;
+  const tilePx = th * slabG.revH / slabG.L;
+  return { x: S.params.art_shift_x + artSignX() * dx / cellPx, y: S.params.art_shift_y + dy / tilePx };
+}
+const slabCv = $("slab");
+let dragRaf = 0;
+slabCv.addEventListener("pointerdown", (e) => {
+  if (!artActive() || !S.last || (e.pointerType === "mouse" && e.button !== 0)) return;
+  S.drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0 };
+  try { slabCv.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  $("slab-wrap").classList.add("grabbing");
+  slabCv.focus({ preventScroll: true });
+  e.preventDefault();
+});
+slabCv.addEventListener("pointermove", (e) => {
+  if (!S.drag || e.pointerId !== S.drag.id) return;
+  S.drag.dx = e.clientX - S.drag.x0; S.drag.dy = e.clientY - S.drag.y0;
+  if (!dragRaf) dragRaf = requestAnimationFrame(() => { dragRaf = 0; drawSlab(); });
+});
+function endDrag(e, commit) {
+  if (!S.drag || e.pointerId !== S.drag.id) return;
+  const d = S.drag; S.drag = null;
+  $("slab-wrap").classList.remove("grabbing");
+  if (commit && (d.dx || d.dy)) { const r = dragToShift(d.dx, d.dy); S.pend = d; setArt({ x: r.x, y: r.y }, true); }
+  else drawSlab();
+}
+slabCv.addEventListener("pointerup", (e) => endDrag(e, true));
+slabCv.addEventListener("pointercancel", (e) => endDrag(e, false));
+slabWrapEl().addEventListener("wheel", (e) => {
+  if (!artActive() || !S.last) return;
+  e.preventDefault();
+  if (!e.deltaY) return;
+  setArt({ scale: S.params.art_scale + (e.deltaY < 0 ? 5 : -5) });
+}, { passive: false });
+slabCv.addEventListener("keydown", (e) => {
+  if (!artActive() || !S.last || e.ctrlKey || e.metaKey || e.altKey) return;
+  const st = e.shiftKey ? 0.1 : 0.02, sx = artSignX();
+  const p = S.params;
+  switch (e.key) {
+    case "ArrowLeft": setArt({ x: p.art_shift_x - sx * st }); break;
+    case "ArrowRight": setArt({ x: p.art_shift_x + sx * st }); break;
+    case "ArrowUp": setArt({ y: p.art_shift_y - st }); break;
+    case "ArrowDown": setArt({ y: p.art_shift_y + st }); break;
+    case "+": case "=": setArt({ scale: p.art_scale + 5 }); break;
+    case "-": case "_": setArt({ scale: p.art_scale - 5 }); break;
+    default: return;
+  }
+  e.preventDefault();
+});
+function slabWrapEl() { return $("slab-wrap"); }
 /* Drag a picture onto the slab to use it. */
 const slabWrap = $("slab-wrap");
 const ARTISH = /\.(png|jpe?g|webp|svg)$/i;

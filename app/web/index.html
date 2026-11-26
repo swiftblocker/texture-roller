@@ -20,7 +20,7 @@
 </div>
 <header class="bar">
   <span class="wordmark">Roller</span>
-  <div class="seg mode-switch" id="mode-switch" role="group" aria-label="Tool" hidden>
+  <div class="seg mode-switch" id="mode-switch" role="group" aria-label="Tool">
     <button type="button" id="mode-roller" aria-pressed="true">Roller</button>
     <button type="button" id="mode-cookie" aria-pressed="false">Cookie cutter</button>
   </div>
@@ -104,6 +104,7 @@
     <div class="toolbar" role="toolbar" aria-label="Cookie preview">
       <label id="cookie-upload" class="btn btn-upload" for="cookie-upload-file">Upload a picture</label>
       <input type="file" id="cookie-upload-file" class="vh-file" accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg,.png,.jpg,.jpeg,.webp">
+      <p id="cookie-status" class="cookie-status" role="status" aria-live="polite">Upload a drawing or logo to start.</p>
       <div class="seg" id="cookie-view" role="group" aria-label="What to show">
         <button type="button" id="cv-both" aria-pressed="true">Both</button>
         <button type="button" id="cv-back" aria-pressed="false">Cutter back</button>
@@ -123,7 +124,6 @@
       </div>
       <div id="cookie-empty" class="empty">Upload a drawing or logo to start.</div>
     </div>
-    <p id="cookie-note" class="note cookie-note">Cookie mode works with drawings and logos (SVG, PNG, JPEG, WEBP). Photos are not supported yet: use a line drawing or a logo.</p>
   </section>
 
   <aside class="side" aria-label="Cookie cutter checks">
@@ -136,6 +136,7 @@
         <ul id="cookie-checks" class="rules"></ul>
       </div>
     </section>
+    <p id="cookie-note" class="note cookie-note">Cookie mode works with drawings and logos (SVG, PNG, JPEG, WEBP). Photos are not supported yet: use a line drawing or a logo.</p>
     <div class="export">
       <button type="button" id="cookie-export" class="btn primary btn-stl" disabled>Download STL</button>
       <p id="cookie-export-note" class="export-note" role="status"></p>

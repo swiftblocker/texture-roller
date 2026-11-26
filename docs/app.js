@@ -1201,9 +1201,9 @@ new ResizeObserver(() => drawSlab()).observe($("slab-wrap"));
 /* ---------- Roller | Cookie cutter ---------- */
 const cookie = initCookie({ engine, S, $, el, css, toEngineFile, mb, dlLink });
 let mode = "roller";
-// Cookie cutter tab hidden until its geometry is rebuilt for the browser runtime (GEOS 3.12
-// crashes the engine); a remembered "cookie" mode opens the roller instead.
-const COOKIE_ENABLED = false;
+// Cookie cutter tab switch: set false to hide it again (it was hidden while the GEOS 3.12
+// crash in the browser was fixed); when false a remembered "cookie" mode opens the roller.
+const COOKIE_ENABLED = true;
 try { if (COOKIE_ENABLED && localStorage.getItem("roller.mode") === "cookie") mode = "cookie"; } catch (e) { /* ignore */ }
 let rollerStarted = false;
 function setMode(m, remember = true) {

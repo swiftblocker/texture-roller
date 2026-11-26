@@ -9,7 +9,53 @@ import shapely
 import shapely.affinity
 from PIL import Image, ImageDraw
 
-from engine import api, art as artmod, cookie as K
+from engine import api, cookie as K
+
+
+def _areal(g):
+    return g.is_empty or g.geom_type in ("Polygon", "MultiPolygon") or (
+        g.geom_type == "GeometryCollection" and all(_areal(x) for x in g.geoms))
+
+
+@pytest.fixture(scope="module", autouse=True)
+def no_risky_geos():
+    """In the browser (Pyodide: shapely 2.0.6 on GEOS 3.12) a GEOS topology error aborts the whole runtime, so
+    the engine must not buffer anything but a point or a two-point line, and must run every area overlay on
+    a fixed grid (snap-rounding). Anything else raises here."""
+    from shapely.geometry.base import BaseGeometry
+    mp = pytest.MonkeyPatch()
+
+    def simple(g):
+        return g.geom_type == "Point" or (g.geom_type == "LineString" and len(g.coords) == 2)
+
+    fb = shapely.buffer
+    mp.setattr(shapely, "buffer", lambda g, d, *a, **k: fb(g, d, *a, **k) if simple(g) else (_ for _ in ()).throw(AssertionError("buffer of " + g.geom_type)))
+    mb = BaseGeometry.buffer
+    mp.setattr(BaseGeometry, "buffer", lambda self, d, *a, **k: mb(self, d, *a, **k) if simple(self) else (_ for _ in ()).throw(AssertionError("buffer of " + self.geom_type)))
+    for name in ("difference", "intersection", "union", "symmetric_difference"):
+        fn = getattr(shapely, name)
+
+        def f(a, b, grid_size=None, _fn=fn, _n=name, **k):
+            if grid_size is None and _areal(a) and _areal(b):
+                raise AssertionError(_n + " on areas without grid_size")
+            return _fn(a, b, grid_size=grid_size, **k)
+        mp.setattr(shapely, name, f)
+
+        def m(self, other, grid_size=None, _fn=fn, _n=name):
+            if grid_size is None and _areal(self) and _areal(other):
+                raise AssertionError(_n + " on areas without grid_size")
+            return _fn(self, other, grid_size=grid_size)
+        mp.setattr(BaseGeometry, name, m)
+    for name in ("union_all", "unary_union"):
+        fn = getattr(shapely, name)
+
+        def u(geoms, grid_size=None, _fn=fn, _n=name, **k):
+            if grid_size is None and any(_areal(g) and not g.is_empty for g in geoms):
+                raise AssertionError(_n + " on areas without grid_size")
+            return _fn(geoms, grid_size=grid_size, **k)
+        mp.setattr(shapely, name, u)
+    yield
+    mp.undo()
 
 
 def _png(im):
@@ -87,16 +133,13 @@ def test_preview_json_and_checks(heart):
 
 def test_tip_is_two_lines_and_nothing_between(heart):
     r = K.build(heart, "heart.png", K.CookieParams.from_dict({}))
-    levels = r["levels"]
-    S = r["S"]
-    p = r["p"]
-    _, fps, _ = K.make_slabs(S, r["R"], r["bars"], p)
+    S, p, levels = r["S"], r["p"], r["levels"]
     widths = []
-    for f in fps[1:]:
-        ring = f.intersection(S.buffer(2.0)).difference(S)
+    for f in r["fps"][1:]:
+        ring = shapely.difference(f, S, grid_size=0.002)       # the wall band (ribs sit inside the cut shape)
         widths.append(ring.area / S.length)
-    assert abs(widths[-1] - 0.86) < 0.06
-    assert all(not (0.46 < w < 0.84) for w in widths)
+    assert abs(widths[-1] - 0.86) < 0.08, widths
+    assert all(not (0.47 < w < 0.82) for w in widths), widths
     assert levels[-1] == p["H"]
 
 
@@ -105,19 +148,16 @@ def test_mirror_letter_r_reads_correctly():
     cp = K.CookieParams.from_dict({"size_mm": 70})
     r = K.build(png, "R.png", cp)
     S, Rm = r["S"], r["R"]
-    # the pressed cookie is the mirror of the cutter; compare with the unflipped art
-    art = artmod.load("upload", png, "R.png", "trace")
-    ink0 = K.ink_from_art(art, 70, flip=False)
-    S0, R0, _ = K.parts_from_ink(ink0)
-    f = (S.bounds[2] - S.bounds[0]) / (S0.bounds[2] - S0.bounds[0])
-    R0 = shapely.affinity.scale(R0, f, f, origin=(0, 0))
-    S0 = shapely.affinity.scale(S0, f, f, origin=(0, 0))
-    dx, dy = S0.centroid.x - S.centroid.x, S0.centroid.y - S.centroid.y
-    cookie = shapely.affinity.translate(K.mirror(Rm, S.centroid.x), dx, dy)
-    unflipped = shapely.affinity.translate(Rm, dx, dy)
-    iou = lambda a, b: a.intersection(b).area / max(a.union(b).area, 1e-9)
-    good, bad = iou(cookie, R0.buffer(0.6)), iou(unflipped, R0.buffer(0.6))
-    assert good > bad + 0.1, (good, bad)
+    # In the art the R sits left of the ring's centre. The printed cutter is the mirror image, so its lines
+    # sit right of centre; the pressed cookie (the mirror of the cutter) then reads like the art again.
+    assert Rm.centroid.x > S.centroid.x + 1.0, (Rm.centroid.x, S.centroid.x)
+    # the same art drawn mirrored must give the mirrored cutter
+    im = Image.open(io.BytesIO(png)).transpose(Image.FLIP_LEFT_RIGHT)
+    r2 = K.build(_png(im), "R2.png", cp)
+    back = shapely.affinity.translate(K.mirror(r2["R"], r2["S"].centroid.x), r["S"].centroid.x - r2["S"].centroid.x, r["S"].centroid.y - r2["S"].centroid.y)
+    inter = shapely.intersection(back, Rm, grid_size=0.01).area
+    union = shapely.union_all([back, Rm], grid_size=0.01).area
+    assert inter / union > 0.55, inter / union
 
 
 def test_cache_hit_is_faster(heart):
@@ -155,3 +195,31 @@ def test_no_art_is_an_error():
         K.build(None, None, K.CookieParams.from_dict({}))
     with pytest.raises(K.CookieError):
         K.build(b"not an image", "x.png", K.CookieParams.from_dict({"size_mm": 41}))
+
+
+def heart2_png(n=600):
+    """Heart outline, two eye dots and a smile arc (the diagnostic drawing from the live site)."""
+    im = Image.new("L", (n, n), 255)
+    d = ImageDraw.Draw(im)
+    pts = []
+    for t in np.linspace(0, 2 * math.pi, 240):
+        x = 16 * math.sin(t) ** 3
+        y = 13 * math.cos(t) - 5 * math.cos(2 * t) - 2 * math.cos(3 * t) - math.cos(4 * t)
+        pts.append((n / 2 + x * 17, n / 2 - y * 17 - 10))
+    d.polygon(pts, outline=0, width=9)
+    d.ellipse((205, 215, 245, 265), fill=0)
+    d.ellipse((355, 215, 395, 265), fill=0)
+    d.arc((210, 290, 390, 420), 20, 160, fill=0, width=12)
+    return _png(im)
+
+
+@pytest.mark.parametrize("name,maker", [("heart", heart_png), ("heart2", heart2_png), ("R", letter_r_png)])
+def test_size_sweep_never_breaks(name, maker):
+    """Every 5 mm from 40 to 140: one closed solid, nothing floating (regression: 80 mm heart had a
+    single unreferenced vertex counted as a body and a four-face pinch column on GEOS 3.14)."""
+    data = maker()
+    for size in range(40, 145, 5):
+        r = K.build(data, name + ".png", K.CookieParams.from_dict({"size_mm": size}))
+        ck = r["ck"]
+        assert ck["watertight"] and ck["winding_consistent"], (name, size)
+        assert ck["bodies"] == 1 and ck["back_components"] == 1, (name, size, ck["bodies"], ck["back_components"])

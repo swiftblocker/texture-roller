@@ -12,6 +12,15 @@ const FIELDS = [
   { k: "imprint_mm", label: "Imprint depth", unit: "mm", min: 0.5, max: 6, step: 0.5 },
   { k: "wall_mm", label: "Cutter height", unit: "mm", min: 10, max: 30, step: 1 },
 ];
+const FRIENDLY = "This drawing tripped up the cutter maker. Try a slightly different size or a simpler drawing.";
+/* Engine errors reach the page as "CookieError: sentence" (our own plain messages) or as raw Python text.
+ * Show our sentence when there is one, the friendly line otherwise; the raw text goes to the console only. */
+function plainError(e) {
+  console.error("cookie engine error:", e && e.message ? e.message : e);
+  const m = /CookieError: (.+)$/.exec(String((e && e.message) || ""));
+  if (m && !/Exception|Traceback|Error:/.test(m[1])) return m[1].trim();
+  return FRIENDLY;
+}
 const ARTISH = /\.(png|jpe?g|webp|svg)$/i;
 
 export function initCookie(ctx) {
@@ -54,29 +63,46 @@ export function initCookie(ctx) {
     for (const f of FIELDS) {
       const inp = el("input", { type: "number", id: "c-" + f.k, step: f.step, min: f.min, max: f.max, inputmode: "decimal" });
       inp.value = C.params[f.k];
+      const hint = el("span", { class: "hint", id: "c-hint-" + f.k, hidden: true, text: f.min + " to " + f.max + " " + f.unit });
+      inp.setAttribute("aria-describedby", hint.id);
       inp.addEventListener("input", () => {
         const v = Number(inp.value);
-        if (inp.value === "" || !Number.isFinite(v) || v < f.min || v > f.max) { inp.classList.add("invalid"); return; }
-        inp.classList.remove("invalid");
+        if (inp.value === "" || !Number.isFinite(v) || v < f.min || v > f.max) {
+          inp.classList.add("invalid"); inp.setAttribute("aria-invalid", "true"); hint.hidden = false; return;
+        }
+        inp.classList.remove("invalid"); inp.removeAttribute("aria-invalid"); hint.hidden = true;
         C.params[f.k] = v;
         save();
         schedule();
       });
       inputs[f.k] = inp;
-      body.append(el("div", { class: "row" }, el("label", { for: "c-" + f.k }, f.label, el("span", { class: "unit", text: f.unit })), inp));
+      inp.hint = hint;
+      body.append(el("div", { class: "row" }, el("label", { for: "c-" + f.k }, f.label, el("span", { class: "unit", text: f.unit })), inp, hint));
     }
     body.append(el("p", { class: "note", text: "The cutting edge, back bars and rib sizes are fixed to what prints well: a 0.86 mm edge (two lines of a 0.4 mm nozzle), 6 x 2.4 mm bars." }));
     form.append(el("details", { class: "group", open: true }, el("summary", { text: "Cookie" }), body));
     const reset = el("div", { class: "group-body" }, el("button", {
       type: "button", class: "btn", text: "Reset to the defaults", onclick: () => {
         C.params = { ...DEFAULTS };
-        for (const f of FIELDS) { inputs[f.k].value = C.params[f.k]; inputs[f.k].classList.remove("invalid"); }
+        for (const f of FIELDS) {
+          inputs[f.k].value = C.params[f.k]; inputs[f.k].classList.remove("invalid");
+          inputs[f.k].removeAttribute("aria-invalid"); inputs[f.k].hint.hidden = true;
+        }
         save(); schedule();
       },
     }));
     form.append(reset);
   }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(C.params)); } catch (e) { /* ignore */ } }
+
+  /* ---------- status line under the Upload button ---------- */
+  const narrow = window.matchMedia("(max-width: 1023px)");
+  function setStatus(text, kind) {
+    const s = $("cookie-status");
+    s.textContent = text;
+    s.className = "cookie-status" + (kind ? " " + kind : "");
+    if (narrow.matches && kind) s.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
 
   /* ---------- preview requests ---------- */
   let timer = null;
@@ -87,6 +113,7 @@ export function initCookie(ctx) {
   function setBusy(on) {
     C.busy = on;
     $("busy").textContent = on ? "Updating" : "";
+    if (on) setStatus("Making the cutter...", "busy");
     $("cookie-stage").classList.toggle("busy", on);
     $("cookie-stage").setAttribute("aria-busy", String(on));
   }
@@ -97,7 +124,7 @@ export function initCookie(ctx) {
   async function requestPreview() {
     if (document.querySelector("#cookie-params input.invalid")) return;
     const file = currentFile();
-    if (!file) { C.last = null; empty("Upload a drawing or logo to start. SVG, PNG, JPEG or WEBP.", false); renderChecks(); drawAll(); return; }
+    if (!file) { C.last = null; setStatus("Upload a drawing or logo to start.", ""); empty("Upload a drawing or logo to start. SVG, PNG, JPEG or WEBP.", false); renderChecks(); drawAll(); return; }
     if (C.photoFor !== file) { C.photoFor = file; C.photo = false; isPhoto(file).then((p) => { if (C.photoFor === file) { C.photo = p; renderNote(); } }); }
     const mine = ++C.seq;
     C.t0 = performance.now();
@@ -115,10 +142,15 @@ export function initCookie(ctx) {
       }
       $("cookie-empty").hidden = true;
       renderAll();
+      const warns = data.checks.filter((x) => x.level === "warn").length;
+      setStatus("Ready: cut shape " + data.size.cut_w + " x " + data.size.cut_h + " mm"
+        + (data.can_export ? "" : ", but the download is blocked (see Checks)") + (warns ? ", " + warns + " thing" + (warns > 1 ? "s" : "") + " to look at." : "."), data.can_export ? "ok" : "err");
     } catch (e) {
       if (e.name === "Superseded") return;
       C.last = null;
-      empty("Preview failed: " + e.message, true);
+      const msg = plainError(e);
+      setStatus(msg, "err");
+      empty(msg, true);
       renderChecks(); drawAll();
     } finally { setBusy(false); }
   }
@@ -254,6 +286,7 @@ export function initCookie(ctx) {
   }
   async function useFile(f) {
     if (!f) return;
+    setStatus("Reading the picture...", "busy");
     C.file = await toEngineFile(f);
     C.last = null;
     syncUpload();
@@ -295,7 +328,7 @@ export function initCookie(ctx) {
         res.append(el("p", { class: "caption", text: "Print with the flat back on the bed, 0.2 mm layers, no supports. The cutting edge goes up." }));
       }
     } catch (e) {
-      res.replaceChildren(el("span", { class: "err", text: "Export failed: " + e.message }));
+      res.replaceChildren(el("span", { class: "err", text: plainError(e) }));
     } finally { updateExport(); }
   };
 
@@ -303,6 +336,7 @@ export function initCookie(ctx) {
   renderChecks();
   renderNote();
   syncUpload();
+  if (narrow.matches) setView("cookie");   // one view at a time on a phone; the toggle switches
   return {
     show() { syncUpload(); schedule(); requestAnimationFrame(drawAll); },
     hide() { clearTimeout(timer); },

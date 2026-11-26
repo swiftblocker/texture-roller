@@ -93,3 +93,10 @@ Feature 6/10 (from 4), skill 4/10 (from 3). Squint 0.738 -> 0.743. Reports: redt
 - Mesh built with shapely plus its own ear-clipping triangulation (Pyodide has no earcut/triangle/manifold). Cookie tests pass on shapely 2.0.6, the browser's version.
 - Download blocked only for a broken mesh or a floating piece.
 - Not tested in a browser before deploying; no cutter printed yet.
+
+## 2026-11-25 Cookie cutter tab: browser crash fixed, tab back on (owner: "full diagnostic ... click all the buttons", then "hide it, then rebuild")
+- Live diagnostic found every upload aborted the browser engine (and the roller with it): Pyodide 0.27.7 and 0.28.3 both run shapely 2.0.x on GEOS 3.12.1, whose buffer/overlay throws TopologyException on the cutter's shapes, and in Pyodide that is a fatal runtime abort, not a Python exception. This PC's GEOS 3.11 / 3.14 never threw, so local tests could not see it. Found by running the engine inside the real browser runtime with every shapely call logged.
+- Tab hidden on the live site while rebuilding (commit dc04087).
+- Rebuild: all 2D offsets and morphology in engine/cookie.py run on a raster (one distance field per shape, every offset a level of it); shapely only builds polygons and does grid-snapped unions/differences. A test fixture makes buffer and grid-less overlays raise, so they cannot come back.
+- Verified in the real browser runtime: heart 40-140 mm (15 sizes) and a face drawing at 3 sizes, zero crashes, 3-7.6 s each; full app flow (upload, preview, views, size change, a valid 1.1 MB STL) on desktop and at 390 px phone width.
+- Phone fixes: status line under Upload, one view at a time, settings right after the preview, 44 px targets, range hints on bad values.

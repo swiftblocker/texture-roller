@@ -191,14 +191,16 @@ def test_block_rules_fire(over, rid):
     assert str(rid) in hit[0]["msg"] and hit[0]["value"] is not None
 
 
-def test_r19b_thin_feature_blocks():
+def test_thin_line_is_thickened_not_blocked():
+    # a 0.3 mm line used to block the export (R19b); traced uploads now widen thin raised lines
+    # to the clay minimum, so the same art exports
     svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect x="10" y="10" width="80" height="0.3" fill="#000"/>'
            '<rect x="10" y="50" width="80" height="20" fill="#000"/></svg>').encode()
-    P = Params.from_dict({**FAST, "art_source": "upload", "n_around": 1, "diameter": 60.0})
-    r = api.preview({**FAST, "art_source": "upload", "n_around": 1, "diameter": 60.0, "pitch_preview": 0.25}, svg, "t.svg")
+    r = api.preview({**FAST, "art_source": "upload", "n_around": 1, "diameter": 60.0, "pitch_preview": 0.2}, svg, "t.svg")
     ids = {x["id"]: x for x in r["rules"]}
-    assert "R19b" in ids and not ids["R19b"]["ok"], ids.keys()
-    assert "R26" in ids
+    assert r["art_report"].get("thickened", 0) >= 1
+    assert "R19b" not in ids or ids["R19b"]["ok"], ids["R19b"]["msg"]
+    assert r["can_export"]
 
 
 def test_default_has_no_block():

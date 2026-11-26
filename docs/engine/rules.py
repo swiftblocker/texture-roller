@@ -88,7 +88,10 @@ def evaluate(P, F, dv, val=None, ref=None, per_part=None):
     V["R62"] = (L, P.cnc_rotary_max_length) if P.cnc_rotary_max_length > 0 else None
     V["R64"] = (tri, None)
     out = []
-    fine = (P.text or "").strip() or (P.art_style == "group" and P.art_source == "upload")
+    # text, group photos and traced uploads are drawn at or above the clay minimum by the engine
+    # (text.py, group.py, layout._thicken_thin), so on the coarse preview grid a width within one
+    # cell of its limit is grid noise; the export measures again at pitch_export and still blocks
+    fine = (P.text or "").strip() or (P.art_source == "upload" and P.art_style in ("group", "trace"))
     grid_tol = F.pitch if (val is None and fine and F.pitch > P.pitch_export) else 0.0
     for rid, c in ck.items():
         if rid in V:

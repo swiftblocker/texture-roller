@@ -57,6 +57,34 @@ def _lattice_dist(x, phase, cell):
     return np.abs(((x - phase + cell / 2) % cell) - cell / 2)
 
 
+def _thicken_thin(top, P, dx, dz, band_rows):
+    """Raised lines thinner than clay and the printer can take (a 0.3 mm whisker) would block the
+    export (R19b) even when the coarse preview grid passes. Widen every raised line narrower than
+    the minimum along its centre line to the minimum; lines already wide enough are untouched.
+    Minimum = 1.0 mm (R19a) at three quarters of the relief height, plus what the draft takes there.
+    -> (top, number of thickened pieces)."""
+    from scipy import ndimage as ndi
+    from skimage.morphology import skeletonize
+    wmin = 1.0 + 0.5 * P.depth * math.tan(math.radians(P.draft_deg)) + 0.1
+    r = wmin / 2.0
+    k = int(math.ceil(2 * r / dx)) + 2
+    pad = np.concatenate([top[:, -k:], top, top[:, :k]], axis=1)          # columns wrap round the roller
+
+    def edt(m):
+        return ndi.distance_transform_edt(m, sampling=(dz, dx))
+    core = edt(pad) > r
+    opened = edt(~core) <= r + 0.5 * max(dx, dz)
+    thin = pad & ~opened
+    thin[band_rows, :] = False
+    if not thin.any():
+        return top, 0
+    sk = skeletonize(thin)
+    n = int(ndi.label(thin)[1])
+    grown = edt(~sk) <= r
+    out = (pad | grown)[:, k:-k]
+    return out, n
+
+
 def build(P, art, pitch, os=OS) -> Layout:
     N, M, pt, pz = grid_dims(P, pitch)
     C, L, n = P.C, P.length, P.n_int
@@ -205,6 +233,9 @@ def build(P, art, pitch, os=OS) -> Layout:
         blend_half = min(P.seam_blend_pct / 100.0 * C / 2.0, 0.45 * cell_w)
         mism = 0.0
 
+    thick = 0
+    if P.art_source == "upload" and P.art_style == "trace":
+        top, thick = _thicken_thin(top, P, C / N2, L / (M2 - 1), band_rows)
     text_mask, text_rep = None, None
     if (P.text or "").strip():
         from . import text as textmod
@@ -218,6 +249,8 @@ def build(P, art, pitch, os=OS) -> Layout:
     rep["dropped_thin"] = 0
     if text_rep:
         rep["text"] = text_rep
+    if thick:
+        rep["thickened"] = thick
     return Layout(
         N=N, M=M, pt=pt, pz=pz, os=os, top_os=np.ascontiguousarray(top_os), drawn_top=drawn,
         band_rows=band_rows, cell_w=cell_w, tile_h=tile_h, n_along=n_along,

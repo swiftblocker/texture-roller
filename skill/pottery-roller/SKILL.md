@@ -131,6 +131,21 @@ Reference tables: `references/dimensions.md` (commercial and printed sizes), `re
 | R78 | Characters the font lacks, a 4th line, or more than 60 characters are reported, never dropped silently. | The potter must see what the roller will not carry. | derived | high | WARN |
 | R79 | If the clay clean-up (slivers under the R74 width) removes more than 15 % of the letter area, say so. | Text that is too small vanishes; it must not vanish silently. | derived | high | WARN |
 
+## 8. Stamp tab (flat hand stamp, not a roller)
+
+The stamp tab lays the same art and relief on a flat block with a knob, pressed face down into clay. Face width W and height H; `d` = relief depth. Confidence is `low` for all of these until a stamp is printed and pressed.
+
+| ID | Rule | Why | Sources | Conf | Check / action |
+|---|---|---|---|---|---|
+| R80 | Face size and input: the stamp face is 25 to 150 mm each way (W and H), and the input is usable: a picture under 25 megapixels that opens as PNG, JPEG, WEBP or SVG, and settings that are numbers. | Under 25 mm the knob pad and the lines are too small to hold and print; over 150 mm one hand cannot press it evenly and the mesh gets heavy; a huge or unreadable picture cannot be traced in a browser tab. | derived | low | BLOCK |
+| R81 | Raised lines and gaps on the face use the roller's limits, measured the same way but without wrapping at the edges, always on one 0.25 mm grid (so preview and export agree): raised line >= 1.0 mm (R19a) and block under 0.8 mm (R19b); groove >= max(1.0, 0.8 d) (R20); gap between raised parts >= 1.0 mm (R21); no feature under 2 x nozzle (R26). Raised slivers under 2 grid pixels wide within 3 mm of the outline are ignored; a thin tip within 3 mm of the outline only warns ("where the art meets the edge: turn the border on or make the art smaller"). | Same clay and same printer as the roller, so the same widths; a tip cut by the edge loses only the tip. | derived | low | BLOCK under R19b away from the edge, else WARN |
+| R82 | Raised share of the face (inside the outline, height >= 0.75 d): under 2 % blocks ("nothing to stamp"), 98 % or more blocks ("the face is solid"); under 8 % warns (the stamp will rock, turn the border on or add art); over 85 % warns (almost solid, the print will be faint); a border with no art or text warns (it prints just a frame). | A stamp pressed by hand needs enough contact to sit flat, little enough that clay can move aside, and something to print at all. | derived | low | BLOCK at the extremes, else WARN |
+| R83 | With the border rim off, art that runs into the outline (more than 1 % of the 0.75 mm band inside the edge is raised) is cut off at the edge. | Art cut by the edge reads as a mistake; the rim or a smaller picture fixes it. | derived | low | WARN |
+| R84 | Knob glue pad = min(40, 0.7 x the short side) mm. Under 20 mm the glued joint may pop off under hand pressure. | A small pad is a small glue joint; epoxy, or a thick block held by its edges (no knob), is the fix. | derived | low | WARN |
+| R85 | Both exported meshes (stamp and knob) pass their own check before the zip is built: watertight, every edge shared by exactly two faces with opposite directions (consistent winding), volume > 0, no zero-area triangles. | A slicer fills holes unpredictably; the check is the same proof as R65-R66 on the stamp's own mesh. | derived | low | BLOCK |
+
+Fixed numbers behind these rules (see `app/out/stamp/brief.md`): block under the relief 6 mm with a knob or 12 mm without; face mirrored left to right (R35 on a flat stamp); 0.6 mm chamfer on the outer top edge; border rim 1.5 to 6 mm at full relief height; mushroom knob 28 mm grip, 30 mm tall, 18 mm grip minimum on faces under 35 mm; relief 0.8 to 3.0 mm; export grid pitch max(0.2, max(W, H) / 450) mm, coarsened so the face stays under 300k triangles (250k round; round blocks halve the spoke count inward so edges stay near one pitch).
+
 ---
 
 ## How to use these rules
@@ -141,6 +156,7 @@ Reference tables: `references/dimensions.md` (commercial and printed sizes), `re
 4. Lay out the repeat: R29-R34, then close the seam: R38-R43.
 5. Pick the build: R51-R62.
 6. Validate: R65-R73. Any BLOCK stops export.
+7. Stamp tab: R80-R85 (size, lines, contact, edge, knob pad, mesh).
 
 ## Known gaps (needing a clay test)
 

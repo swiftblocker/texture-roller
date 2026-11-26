@@ -2,6 +2,7 @@ import * as THREE from "./vendor/three.module.js";
 import { OrbitControls } from "./vendor/OrbitControls.js";
 import { createEngine } from "./engine-client.js";
 import { initCookie } from "./cookie.js";
+import { initStamp } from "./stamp.js";
 
 /* ---------- parameters ---------- */
 const DEFAULTS = {
@@ -1198,31 +1199,48 @@ $("export").onclick = () => doExport("full");
 $("strip-btn").onclick = () => doExport("strip");
 new ResizeObserver(() => drawSlab()).observe($("slab-wrap"));
 
-/* ---------- Roller | Cookie cutter ---------- */
+/* ---------- Roller | Cookie cutter | Stamp ---------- */
 const cookie = initCookie({ engine, S, $, el, css, toEngineFile, mb, dlLink });
+/* The stamp tab reuses the roller's lettering controls: same fonts, same ideas, same field list. */
+const stamp = initStamp({
+  engine, S, $, el, css, toEngineFile, mb, dlLink, hasText, isSingle, isRepeat, OPTS, FONTS, TEXT_IDEAS,
+  textFields: GROUPS.find((g) => g.name === "Text").fields,
+});
 let mode = "roller";
-// Cookie cutter tab switch: set false to hide it again (it was hidden while the GEOS 3.12
-// crash in the browser was fixed); when false a remembered "cookie" mode opens the roller.
+// Cookie cutter and Stamp tab switches: set false to hide a tab again (the cookie tab was hidden once while the
+// GEOS 3.12 crash in the browser was fixed); when false a remembered mode of that tab opens the roller.
 const COOKIE_ENABLED = true;
-try { if (COOKIE_ENABLED && localStorage.getItem("roller.mode") === "cookie") mode = "cookie"; } catch (e) { /* ignore */ }
+const STAMP_ENABLED = true;
+try {
+  const saved = localStorage.getItem("roller.mode");
+  if (COOKIE_ENABLED && saved === "cookie") mode = "cookie";
+  if (STAMP_ENABLED && saved === "stamp") mode = "stamp";
+} catch (e) { /* ignore */ }
+$("mode-cookie").hidden = !COOKIE_ENABLED;
+$("mode-stamp").hidden = !STAMP_ENABLED;
 let rollerStarted = false;
+const SUBS = { roller: "Clay texture roller generator", cookie: "Cookie cutter and stamp generator", stamp: "Hand stamp generator" };
+const TITLES = { roller: "Roller", cookie: "Roller - Cookie cutter", stamp: "Roller - Stamp" };
 function setMode(m, remember = true) {
   mode = m;
-  const ck = m === "cookie";
   document.body.dataset.mode = m;
-  $("mode-roller").setAttribute("aria-pressed", String(!ck));
-  $("mode-cookie").setAttribute("aria-pressed", String(ck));
-  document.querySelector("main.shell:not(.cookie-shell)").hidden = ck;
-  $("cookie-shell").hidden = !ck;
-  $("bar-sub").textContent = ck ? "Cookie cutter and stamp generator" : "Clay texture roller generator";
-  document.title = ck ? "Roller - Cookie cutter" : "Roller";
+  for (const id of ["roller", "cookie", "stamp"]) $("mode-" + id).setAttribute("aria-pressed", String(id === m));
+  document.querySelector("main.shell:not(.cookie-shell):not(.stamp-shell)").hidden = m !== "roller";
+  $("cookie-shell").hidden = m !== "cookie";
+  $("stamp-shell").hidden = m !== "stamp";
+  $("bar-sub").textContent = SUBS[m];
+  document.title = TITLES[m];
   $("busy").textContent = "";
   if (remember) { try { localStorage.setItem("roller.mode", m); } catch (e) { /* ignore */ } }
-  if (ck) cookie.show();
-  else { cookie.hide(); if (!rollerStarted) { rollerStarted = true; schedule(); } else if (S.last) { drawSlab(); } }
+  if (m !== "cookie") cookie.hide();
+  if (m !== "stamp") stamp.hide();
+  if (m === "cookie") cookie.show();
+  else if (m === "stamp") stamp.show();
+  else { if (!rollerStarted) { rollerStarted = true; schedule(); } else if (S.last) { drawSlab(); } }
 }
 $("mode-roller").onclick = () => setMode("roller");
 $("mode-cookie").onclick = () => setMode("cookie");
+$("mode-stamp").onclick = () => setMode("stamp");
 
 showEmpty("Waiting for the first preview.", false);
 setMode(mode, false);

@@ -1,5 +1,5 @@
 {
-  "version": "f9bb0db4ec2c",
+  "version": "012b69b807e8",
   "files": [
     "engine/__init__.py",
     "engine/api.py",
@@ -41,6 +41,7 @@
     "engine/REQUIREMENTS_PYODIDE.txt",
     "engine/rules.py",
     "engine/sketch.py",
+    "engine/stamp.py",
     "engine/text.py"
   ]
 }

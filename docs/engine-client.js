@@ -13,6 +13,8 @@
  *   fitPortrait(params, file)        -> {diameter,n_around,n_along,face_found}
  *   cookiePreview(params, file)      -> {size, checks, can_export, geom, timings}; rejects "Superseded" like preview
  *   cookieExport(params, file)       -> {blocked, checks, filename, bytes, href}
+ *   stampPreview(params, file)       -> {size, checks, can_export, face, timings}; rejects "Superseded" like preview
+ *   stampExport(params, file)        -> {blocked, checks, filename, bytes, files, href}   (href = the zip)
  * All URLs are relative, so a GitHub Pages subpath works. */
 
 /* Phones have far less RAM than a computer, so the export mesh is coarser there. */
@@ -79,6 +81,7 @@ async function httpEngine(onProgress) {
   };
   let ctl = null;
   let cctl = null;
+  let sctl = null;
   let note = null;
   try {
     const s = await (await fetch("api/status")).json();
@@ -118,6 +121,20 @@ async function httpEngine(onProgress) {
     },
     cookieExport: async (params, file) => {
       const j = await check(await fetch("api/cookie_export", { method: "POST", body: form(params, file) }));
+      return { ...j, href: j.blocked ? null : j.download };
+    },
+    stampPreview: async (params, file) => {
+      if (sctl) sctl.abort();
+      sctl = new AbortController();
+      try {
+        return await check(await fetch("api/stamp_preview", { method: "POST", body: form(params, file), signal: sctl.signal }));
+      } catch (e) {
+        if (e.name === "AbortError") { const s = new Error("Superseded"); s.name = "Superseded"; throw s; }
+        throw e;
+      }
+    },
+    stampExport: async (params, file) => {
+      const j = await check(await fetch("api/stamp_export", { method: "POST", body: form(params, file) }));
       return { ...j, href: j.blocked ? null : j.download };
     },
   };
@@ -197,6 +214,21 @@ async function pyodideEngine(onProgress) {
   };
   let cookieUrl = null;
 
+  // Stamp previews: same rule again, one waiting behind the running one, newest wins.
+  let sRunning = false;
+  let sPending = null;
+  const sPump = async () => {
+    if (sRunning || !sPending) return;
+    const job = sPending; sPending = null; sRunning = true;
+    try {
+      const m = await call({ op: "stamp_preview", params: JSON.stringify(job.params), upload: await bytesOf(job.file), name: job.file ? job.file.name : null });
+      job.resolve(JSON.parse(m.json));
+    } catch (e) { job.reject(e); }
+    sRunning = false;
+    sPump();
+  };
+  let stampUrl = null;
+
   let blobUrl = null;
   let blobUrl3 = null;
   let stlUrls = [];
@@ -245,6 +277,18 @@ async function pyodideEngine(onProgress) {
       if (cookieUrl) { URL.revokeObjectURL(cookieUrl); cookieUrl = null; }
       if (m.zip && !j.blocked) cookieUrl = URL.createObjectURL(new Blob([m.zip], { type: "model/stl" }));
       return { ...j, href: cookieUrl };
+    },
+    stampPreview: (params, file) => new Promise((resolve, reject) => {
+      if (sPending) { const s = new Error("Superseded"); s.name = "Superseded"; sPending.reject(s); }
+      sPending = { params, file, resolve, reject };
+      sPump();
+    }),
+    stampExport: async (params, file) => {
+      const m = await call({ op: "stamp_export", params: JSON.stringify(params), upload: await bytesOf(file), name: file ? file.name : null });
+      const j = JSON.parse(m.json);
+      if (stampUrl) { URL.revokeObjectURL(stampUrl); stampUrl = null; }
+      if (m.zip && m.zip.length && !j.blocked) stampUrl = URL.createObjectURL(new Blob([m.zip], { type: "application/zip" }));
+      return { ...j, href: stampUrl };
     },
   };
 }

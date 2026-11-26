@@ -156,3 +156,15 @@ def cookie_export(params: dict, upload: bytes | None = None, upload_name: str | 
     """-> {stl: bytes, sidecar: dict, blocked: bool, checks, filename}."""
     from . import cookie as cookiemod
     return cookiemod.export_bytes(params, upload, upload_name)
+
+
+def stamp_preview(params: dict, upload: bytes | None = None, upload_name: str | None = None) -> dict:
+    """Stamp tab: checks (R80-R85 in plain words), the face heightmap and the clay shading as base64 uint8."""
+    from . import stamp as stampmod
+    return stampmod.preview(params, upload, upload_name)
+
+
+def stamp_export(params: dict, upload: bytes | None = None, upload_name: str | None = None) -> dict:
+    """-> {zip: bytes, blocked: bool, checks, filename, files, bytes, triangles}. A blocked export has no zip."""
+    from . import stamp as stampmod
+    return stampmod.export_bytes(params, upload, upload_name)

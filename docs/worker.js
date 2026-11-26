@@ -1,5 +1,5 @@
 /* Web Worker: runs the Python engine in Pyodide, entirely in the browser.
- * Messages in:  {id, op, ...args}   op = preview | export | test_strip | solve_repeat | patterns | fit_portrait | cookie_preview | cookie_export
+ * Messages in:  {id, op, ...args}   op = preview | export | test_strip | solve_repeat | patterns | fit_portrait | cookie_preview | cookie_export | stamp_preview | stamp_export
  * Messages out: {type:"progress", text, done, total}, {type:"ready"}, {type:"fatal", message},
  *               {type:"result", id, ok, json, zip, error}
  * All URLs are relative to this file so it works under a GitHub Pages subpath. */
@@ -119,6 +119,16 @@ def op_cookie_export(p, u, name):
     _zip = bytes(r["stl"])      # the STL travels back in the same slot as the roller zip
     return _dumps({"blocked": bool(r["blocked"]), "checks": r["checks"], "filename": r["filename"], "sidecar": r["sidecar"], "bytes": len(_zip)})
 
+def op_stamp_preview(p, u, name):
+    return _dumps(api.stamp_preview(json.loads(p), _up(u), name))
+
+def op_stamp_export(p, u, name):
+    global _zip
+    r = api.stamp_export(json.loads(p), _up(u), name)
+    _zip = r["zip"]             # the zip travels back in the same slot as the roller zip (no second copy kept here)
+    del r["zip"]
+    return _dumps({"blocked": bool(r["blocked"]), "checks": r["checks"], "filename": r["filename"], "files": r["files"], "bytes": len(_zip), "stl_bytes": r.get("bytes", 0), "triangles": r.get("triangles", 0)})
+
 def op_solve(tw, dmin, dmax, mx):
     return _dumps(api.solve_repeat(float(tw), float(dmin), float(dmax), int(mx)))
 
@@ -180,6 +190,8 @@ function run(m) {
     case "patterns": return out("op_patterns");
     case "cookie_preview": return out("op_cookie_preview", m.params, m.upload || null, m.name || null);
     case "cookie_export": return out("op_cookie_export", m.params, m.upload || null, m.name || null);
+    case "stamp_preview": return out("op_stamp_preview", m.params, m.upload || null, m.name || null);
+    case "stamp_export": return out("op_stamp_export", m.params, m.upload || null, m.name || null);
     default: throw new Error("unknown op " + m.op);
   }
 }
@@ -220,13 +232,14 @@ self.onmessage = async (ev) => {
     await ensureCv(m);
     const json = await runRetry(m);
     let zip = null, m3 = null, stls = [];
-    if (m.op === "export" || m.op === "test_strip" || m.op === "cookie_export") {
+    if (m.op === "export" || m.op === "test_strip" || m.op === "cookie_export" || m.op === "stamp_export") {
       const proxy = py.globals.get("_zip");
       if (proxy && proxy.toJs) {
         const u8 = proxy.toJs();
         zip = new Uint8Array(u8);
         proxy.destroy();
       }
+      py.runPython("_zip = None");     // the JS side owns the only copy now
     }
     if (m.op === "export" || m.op === "test_strip") {
       const p3 = py.globals.get("_m3");

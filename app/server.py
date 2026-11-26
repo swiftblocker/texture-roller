@@ -225,6 +225,53 @@ def cookie_sidecar(key: str):
     return JSONResponse(COOKIE_KEEP[key][2])
 
 
+# ---- stamp tab: the zip is held in memory (nothing is written to disk) ----
+STAMP_KEEP = {}
+
+
+@app.post("/api/stamp_preview")
+async def stamp_preview(params: str = Form(...), art: Optional[UploadFile] = File(None)):
+    p = _parse(params)
+    data, name = await _read_upload(art)
+    if ENGINE is None:
+        raise HTTPException(503, "engine not loaded")
+    try:
+        return JSONResponse(ENGINE.stamp_preview(p, data, name))
+    except Exception as exc:
+        raise HTTPException(422, f"{type(exc).__name__}: {exc}")
+
+
+@app.post("/api/stamp_export")
+async def stamp_export(params: str = Form(...), art: Optional[UploadFile] = File(None)):
+    p = _parse(params)
+    data, name = await _read_upload(art)
+    if ENGINE is None:
+        raise HTTPException(503, "engine not loaded")
+    try:
+        r = ENGINE.stamp_export(p, data, name)
+    except Exception as exc:
+        raise HTTPException(422, f"{type(exc).__name__}: {exc}")
+    out = {"blocked": bool(r["blocked"]), "checks": r["checks"], "filename": r["filename"], "bytes": len(r["zip"]),
+           "files": r["files"], "stl_bytes": r.get("bytes", 0)}
+    if not r["blocked"]:
+        key = time.strftime("%Y%m%d-%H%M%S") + "-%d" % len(STAMP_KEEP)
+        STAMP_KEEP[key] = (r["zip"], r["filename"])
+        while len(STAMP_KEEP) > 4:
+            STAMP_KEEP.pop(next(iter(STAMP_KEEP)))
+        out["id"] = key
+        out["download"] = f"/api/stamp_download/{key}"
+    return JSONResponse(out)
+
+
+@app.get("/api/stamp_download/{key}")
+def stamp_download(key: str):
+    from fastapi.responses import Response
+    if key not in STAMP_KEEP:
+        raise HTTPException(404, "no such export")
+    z, fname = STAMP_KEEP[key]
+    return Response(z, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
 @app.get("/api/download/{stamp}")
 def download(stamp: str):
     if not re.fullmatch(r"[0-9]{8}-[0-9]{6}(-[0-9]+)?", stamp):

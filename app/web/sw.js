@@ -6,7 +6,7 @@
 const VERSION = "roller-v3";
 const CDN_HOSTS = ["cdn.jsdelivr.net", "pypi.org", "files.pythonhosted.org"];
 const CORE = [
-  "./", "index.html", "app.css", "app.js", "cookie.js", "engine-client.js", "worker.js",
+  "./", "index.html", "app.css", "app.js", "cookie.js", "stamp.js", "engine-client.js", "worker.js",
   "vendor/three.module.js", "vendor/OrbitControls.js",
   "fonts/sofia-sans-latin-wght-normal.woff2", "fonts/chivo-mono-latin-wght-normal.woff2",
   "engine_manifest.json",

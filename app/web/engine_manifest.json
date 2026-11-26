@@ -1,5 +1,5 @@
 {
-  "version": "e84c9eea5424",
+  "version": "f9bb0db4ec2c",
   "files": [
     "engine/__init__.py",
     "engine/api.py",
@@ -36,6 +36,7 @@
     "engine/MANIFEST.txt",
     "engine/mesh.py",
     "engine/params.py",
+    "engine/photo.py",
     "engine/relief.py",
     "engine/REQUIREMENTS_PYODIDE.txt",
     "engine/rules.py",

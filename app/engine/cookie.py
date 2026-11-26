@@ -423,6 +423,35 @@ def rules_gate(S, R, sdS, g, p, rounds=8):
     return R, before, dough_metrics(S, R, sdS, g, p)
 
 
+# ---------------------------------------------------------------- outline checks (raster only)
+def _contour_len(m, g):
+    """Length in mm of the outline of a mask (sub-pixel marching squares on its signed distance)."""
+    from skimage import measure
+    if not m.any():
+        return 0.0
+    f = np.pad(sdf(m, g), 1, mode="constant", constant_values=1e3)
+    return float(sum(np.hypot(*np.diff(c, axis=0).T).sum() for c in measure.find_contours(f, 0.0))) * g.px
+
+
+def outline_metrics(S, g):
+    """Neck (share of the area that survives a 3 mm radius opening, and how many real pieces it splits into),
+    raggedness (outline length over the length after a 2 mm close-open), fullness (area over convex hull)."""
+    from skimage.morphology import convex_hull_image
+    area = float(S.sum())
+    op = opening(S, 3.0, g)
+    kept = float(op.sum()) / max(area, 1.0)
+    pieces = len(_comps(op, 0.03 * area * g.px ** 2, g)[1])
+    r = 2.0
+    cl = erode(dilate(S, r, g), r, g) | S
+    sm = opening(cl, r, g)
+    L0, L1 = _contour_len(S, g), _contour_len(sm, g)
+    ys, xs = np.nonzero(S)
+    sub = S[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
+    hull = float(convex_hull_image(sub).sum())
+    return dict(neck_kept=round(kept, 3), neck_pieces=pieces, ragged=round(L0 / max(L1, 1e-6), 2),
+                fullness=round(area / max(hull, 1.0), 3))
+
+
 # ---------------------------------------------------------------- bridges (raster)
 def _length(pc, g):
     """Half the outline length of a rib piece in mm: a stroke's length, a dot's half circumference."""
@@ -869,8 +898,24 @@ def plain_checks(ck, info, p, notes=()):
     add("pass" if wu == 0 else "warn",
         "Back windows are at least %g mm across, so dough can be pushed out." % p["window"] if wu == 0
         else "%d back windows are under %g mm across; dough is harder to push out there." % (wu, p["window"]))
+    ph = info.get("photo")
+    if ph:
+        add("pass", ph["message"] + ".")
+        if ph.get("lines", 99) < 4:
+            add("warn", "We found only %d line%s in this photo, so the cookie has little pattern." % (ph["lines"], "" if ph["lines"] == 1 else "s"))
+    ol = info.get("outline")
+    if ol:
+        if ol["neck_kept"] < 0.90 or ol["neck_pieces"] > 1:
+            add("block", "The cookie has a neck thinner than 6 mm and would break there. Make the shape fuller or the size bigger.")
+        else:
+            add("pass", "No neck thinner than 6 mm: the cookie will not snap when lifted.")
+        if ol["ragged"] > 1.35:
+            add("warn", "The edge is ragged. Dough will tear on it. A smoother outline cuts cleaner.")
+        if ol["fullness"] < 0.55:
+            add("warn", "This shape has deep cuts and thin arms, so the dough may bend when lifted.")
     if info.get("solid"):
-        add("warn", "The picture is a solid shape, so the cookie has no inside lines. Use a line drawing for an embossed cookie.")
+        add("warn", "We could not find lines in this photo, so the cookie has no inside lines." if ph
+            else "The picture is a solid shape, so the cookie has no inside lines. Use a line drawing for an embossed cookie.")
     add("pass", "Roll the dough to %g mm: the lines then press %g mm deep." % (p["dough"], p["imprint"]))
     for n in notes:
         add("warn", n)
@@ -903,10 +948,26 @@ def prepare(upload, name, cp: CookieParams):
         r = dict(_PREP[key]); r["prep_cached"] = True
         return r
     t0 = time.time()
+    from . import photo as photomod
+    src, photo_info = upload, None
+    if photomod.analyze(upload)["is_photo"]:
+        # a photo never goes through Otsu + potrace (that traces shadow, not the subject): find the subject,
+        # make a clean line drawing of it, and feed that to the drawing engine
+        try:
+            ph = photomod.make_cutter_drawing(upload, cp.size_mm)
+        except photomod.NeedsCv as exc:
+            raise CookieError(str(exc))
+        except photomod.PhotoRefused as exc:
+            raise CookieError(str(exc))
+        src = ph["png"]
+        photo_info = dict(route=ph["route"], message=ph["message"], lines=ph["report"]["lines"], report=ph["report"], overlay=ph["overlay"])
     try:
-        art = artmod.load("upload", upload, name, "trace")
+        art = artmod.load("upload", src, name, "trace")
     except Exception as exc:       # ArtError, or the image could not be decoded
-        raise CookieError("could not read the picture: %s" % exc)
+        # plain words for the person; the technical cause stays chained for the console
+        if "identify image" in str(exc) or "cannot" in str(exc).lower():
+            raise CookieError("We could not open this file as a picture. Use a PNG, JPEG, WEBP or SVG file.") from exc
+        raise CookieError("We could not use this picture: %s" % exc) from exc
     p = design(cp)
     polys0, _w, _h = _art_polys(art, cp.size_mm)
     margin = p["wall_back"] + p["rim_w"] + 3.0
@@ -930,7 +991,10 @@ def prepare(upload, name, cp: CookieParams):
         f *= err
     R = thin_lines(Rraw, g, p)
     R = drop_small(R & (sdS < 0.3), 1.0, g)
-    r = dict(g=g, S=S, R=R, sdS=sdS, info=dict(solid=bool(solid)), pitch=pitch,
+    info = dict(solid=bool(solid), outline=outline_metrics(S, g))
+    if photo_info:
+        info["photo"] = photo_info
+    r = dict(g=g, S=S, R=R, sdS=sdS, info=info, pitch=pitch,
              t_art=round(t1 - t0, 2), t_ribs=round(time.time() - t1, 2), prep_cached=False)
     _PREP[key] = r
     while len(_PREP) > 3:
@@ -1021,6 +1085,8 @@ def preview(params: dict, upload: bytes | None = None, upload_name: str | None =
         "rules": {"before": r["ck"]["rules_before"], "after": r["ck"]["rules_after"], "final": r["ck"]["final_stamp_level"]},
         "timings": {**r["time"], "cached": bool(r["cached"]), "art_cached": bool(r["prep_cached"]), "pitch_mm": r["ck"]["pitch_mm"]},
         "solid": bool(r["info"].get("solid")),
+        "outline": r["info"].get("outline"),
+        "photo": r["info"].get("photo"),
     }
 
 

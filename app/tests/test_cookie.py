@@ -223,3 +223,119 @@ def test_size_sweep_never_breaks(name, maker):
         ck = r["ck"]
         assert ck["watertight"] and ck["winding_consistent"], (name, size)
         assert ck["bodies"] == 1 and ck["back_components"] == 1, (name, size, ck["bodies"], ck["back_components"])
+
+
+# ---------------------------------------------------------------- outline checks (no cv2 needed)
+def _texts(r, level=None):
+    return [c["text"] for c in r["checks"] if level is None or c["level"] == level]
+
+
+def test_neck_blocks_a_dumbbell():
+    im = Image.new("L", (700, 400), 255)
+    d = ImageDraw.Draw(im)
+    d.ellipse((20, 100, 220, 300), fill=0)
+    d.ellipse((480, 100, 680, 300), fill=0)
+    d.rectangle((215, 192, 485, 208), fill=0)          # a thin neck: about 2 mm at 80 mm
+    r = api.cookie_preview({"size_mm": 80}, _png(im), "dumbbell.png")
+    assert not r["can_export"]
+    assert any("neck thinner than 6 mm" in t for t in _texts(r, "block"))
+    assert r["outline"]["neck_kept"] < 0.9 or r["outline"]["neck_pieces"] > 1
+
+
+def test_ragged_and_thin_arms_warn():
+    n = 600
+    im = Image.new("L", (n, n), 255)
+    d = ImageDraw.Draw(im)
+    pts = []
+    for i in range(240):
+        a = 2 * math.pi * i / 240
+        rr = 270 if i % 2 else 240          # a saw-tooth edge
+        pts.append((n / 2 + rr * math.cos(a), n / 2 + rr * math.sin(a)))
+    d.polygon(pts, fill=0)
+    r = api.cookie_preview({"size_mm": 80}, _png(im), "saw.png")
+    assert r["outline"]["ragged"] > 1.35, r["outline"]
+    assert any("ragged" in t for t in _texts(r, "warn"))
+    # a thin crescent: low fullness
+    im = Image.new("L", (n, n), 255)
+    d = ImageDraw.Draw(im)
+    d.ellipse((30, 30, 570, 570), fill=0)
+    d.ellipse((120, 60, 640, 540), fill=255)
+    r = api.cookie_preview({"size_mm": 80}, _png(im), "crescent.png")
+    assert r["outline"]["fullness"] < 0.55, r["outline"]
+
+
+def test_drawings_pass_outline_checks(heart):
+    r = api.cookie_preview({"size_mm": 80}, heart, "heart.png")
+    assert r["can_export"] and r["photo"] is None
+    assert r["outline"]["neck_kept"] >= 0.9 and r["outline"]["ragged"] <= 1.35 and r["outline"]["fullness"] >= 0.55
+    assert not any("solid" in t and "photo" in t for t in _texts(r))
+
+
+# ---------------------------------------------------------------- photos
+def _photo_png(name):
+    import skimage.data as sd
+    try:
+        arr = getattr(sd, name)()
+    except Exception:
+        pytest.skip("skimage sample photo %s not available offline" % name)
+    return _png(Image.fromarray(arr).convert("RGB"))
+
+
+def test_photo_detection_needs_no_cv2(heart):
+    from engine import photo
+    assert photo.analyze(_photo_png("astronaut"))["is_photo"]
+    assert not photo.analyze(heart)["is_photo"]
+    assert not photo.analyze(letter_r_png())["is_photo"]
+    assert not photo.analyze(b"<svg xmlns='http://www.w3.org/2000/svg'/>")["is_photo"]
+
+
+def test_photo_without_cv2_asks_for_it(monkeypatch):
+    import builtins
+    real = builtins.__import__
+
+    def fake(name, *a, **k):
+        if name == "cv2":
+            raise ImportError("no cv2")
+        return real(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", fake)
+    with pytest.raises(K.CookieError, match="NEEDS_CV"):
+        K.prepare(_photo_png("astronaut"), "a.png", K.CookieParams.from_dict({}))
+
+
+@pytest.mark.parametrize("name,route", [("coffee", "subject"), ("astronaut", "head"), ("chelsea", "plaque")])
+def test_photo_routes_export_with_ribs(name, route):
+    pytest.importorskip("cv2")
+    r = api.cookie_preview({"size_mm": 80}, _photo_png(name), name + ".png")
+    assert r["photo"]["route"] == route, r["photo"]["route"]
+    assert r["can_export"]
+    assert len(r["geom"]["ribs"]) >= 3, len(r["geom"]["ribs"])
+    assert r["photo"]["overlay"]["outline"] and r["photo"]["message"].startswith("Photo:")
+    assert not any("picture is a solid shape" in t or "could not find lines" in t for t in _texts(r))
+    e = api.cookie_export({"size_mm": 80}, _photo_png(name), name + ".png")
+    assert not e["blocked"] and len(e["stl"]) > 1000
+
+
+def test_rocket_photo_is_refused():
+    pytest.importorskip("cv2")
+    with pytest.raises(K.CookieError, match="could not find a clear subject"):
+        api.cookie_preview({"size_mm": 80}, _photo_png("rocket"), "rocket.png")
+    with pytest.raises(K.CookieError, match="could not find a clear subject"):
+        api.cookie_export({"size_mm": 80}, _photo_png("rocket"), "rocket.png")
+
+
+def test_photo_decision_does_not_depend_on_cookie_size():
+    """Owner diagnostic: the rocket photo was refused at 80 mm but accepted at 110 mm, because the
+    "enough lines" rule was measured in mm. What a photo is must not change with the size."""
+    pytest.importorskip("cv2")
+    import io as _io
+    import skimage.data as _d
+    from PIL import Image as _Image
+    for arr, want in ((_d.rocket(), "refused"), (_d.coffee(), "subject")):
+        b = _io.BytesIO(); _Image.fromarray(arr).convert("RGB").save(b, "JPEG", quality=92)
+        got = set()
+        for s in (40, 80, 110, 160):
+            try:
+                got.add((api.cookie_preview({"size_mm": s}, b.getvalue(), "p.jpg").get("photo") or {}).get("route"))
+            except Exception as e:  # the refusal is a CookieError with the plain message
+                got.add("refused" if "clear subject" in str(e) else "error")
+        assert got == {want}, got

@@ -106,6 +106,7 @@
       <input type="file" id="cookie-upload-file" class="vh-file" accept="image/png,image/jpeg,image/webp,image/svg+xml,.svg,.png,.jpg,.jpeg,.webp">
       <p id="cookie-status" class="cookie-status" role="status" aria-live="polite">Upload a drawing or logo to start.</p>
       <div class="seg" id="cookie-view" role="group" aria-label="What to show">
+        <button type="button" id="cv-photo" aria-pressed="false" hidden>Your photo</button>
         <button type="button" id="cv-both" aria-pressed="true">Both</button>
         <button type="button" id="cv-back" aria-pressed="false">Cutter back</button>
         <button type="button" id="cv-cookie" aria-pressed="false">Pressed cookie</button>
@@ -114,6 +115,10 @@
       <span id="cookie-caption" class="caption"></span>
     </div>
     <div id="cookie-stage" class="cookie-stage" data-view="both">
+      <div class="cookie-pane" id="cookie-pane-photo" hidden>
+        <canvas id="cookie-photo" aria-label="Your photo with the cut outline and the stamp lines drawn on it"></canvas>
+        <span class="caption pane-cap">Your photo with the cut outline (orange) and the stamp lines (white)</span>
+      </div>
       <div class="cookie-pane" id="cookie-pane-back">
         <canvas id="cookie-back" aria-label="The cutter seen from its back: rim, bars and inside lines"></canvas>
         <span class="caption pane-cap">Cutter seen from the back: rim grey, bars blue, inside lines orange</span>

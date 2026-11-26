@@ -187,15 +187,30 @@ function run(m) {
 /* Group photos need OpenCV (face finder, people cut-out). It is 11 MB, so it loads only the
  * first time a group request arrives; the service worker keeps it after that. */
 let cvReady = false;
+async function loadCv() {
+  if (cvReady) return;
+  progress("Loading the face finder (11 MB, first time only)");
+  await py.loadPackage("opencv-python", { messageCallback: () => {}, errorCallback: () => {} });
+  cvReady = true;
+  progress("Face finder ready");
+}
 async function ensureCv(m) {
   if (cvReady || !m.params) return;
   let p = null;
   try { p = JSON.parse(m.params); } catch (e) { return; }
   if (!p || p.art_style !== "group") return;
-  progress("Loading the face finder (11 MB, first time only)");
-  await py.loadPackage("opencv-python", { messageCallback: () => {}, errorCallback: () => {} });
-  cvReady = true;
-  progress("Face finder ready");
+  await loadCv();
+}
+/* Cookie photos: the engine finds out by itself that the upload is a photo and raises NEEDS_CV when OpenCV is
+ * missing; load it once and run the same request again. */
+async function runRetry(m) {
+  try { return run(m); } catch (e) {
+    if (!cvReady && (m.op === "cookie_preview" || m.op === "cookie_export") && /NEEDS_CV/.test(String(e && e.message ? e.message : e))) {
+      await loadCv();
+      return run(m);
+    }
+    throw e;
+  }
 }
 
 self.onmessage = async (ev) => {
@@ -203,7 +218,7 @@ self.onmessage = async (ev) => {
   if (!py) { post({ type: "result", id: m.id, ok: false, error: "engine not ready" }); return; }
   try {
     await ensureCv(m);
-    const json = run(m);
+    const json = await runRetry(m);
     let zip = null, m3 = null, stls = [];
     if (m.op === "export" || m.op === "test_strip" || m.op === "cookie_export") {
       const proxy = py.globals.get("_zip");

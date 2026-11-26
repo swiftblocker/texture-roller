@@ -2,7 +2,9 @@
  * The engine (engine/cookie.py) returns mm polygons of the cutter as printed plus plain-word checks;
  * this file draws two views from them (the back of the cutter, and the pressed cookie, which is its
  * mirror) and runs the download. Both views are drawn mirrored in x relative to the print bed view,
- * so they read the way the cookie will. Drawings and logos only: photos are not supported yet. */
+ * so they read the way the cookie will. Drawings and logos go straight in; a photo is detected by the engine,
+ * which finds the subject (face, main subject or a round plaque), draws the cut outline over the photo here, and
+ * refuses a photo with no clear subject. */
 
 const KEY = "cookie.params";
 const DEFAULTS = { size_mm: 80, dough_mm: 6, imprint_mm: 2.5, wall_mm: 14 };
@@ -18,14 +20,14 @@ const FRIENDLY = "This drawing tripped up the cutter maker. Try a slightly diffe
 function plainError(e) {
   console.error("cookie engine error:", e && e.message ? e.message : e);
   const m = /CookieError: (.+)$/.exec(String((e && e.message) || ""));
-  if (m && !/Exception|Traceback|Error:/.test(m[1])) return m[1].trim();
+  if (m && !/Exception|Traceback|Error:/.test(m[1])) return m[1].replace(/^NEEDS_CV\s*/, "").trim();
   return FRIENDLY;
 }
 const ARTISH = /\.(png|jpe?g|webp|svg)$/i;
 
 export function initCookie(ctx) {
   const { engine, S, $, el, css, toEngineFile, mb, dlLink } = ctx;
-  const C = { params: { ...DEFAULTS }, file: null, last: null, seq: 0, shown: 0, busy: false, photo: false, photoFor: null, t0: 0 };
+  const C = { params: { ...DEFAULTS }, file: null, last: null, seq: 0, shown: 0, busy: false, photo: false, photoFor: null, t0: 0, bmp: null, bmpFor: null };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) || "null");
     if (saved && typeof saved === "object") for (const f of FIELDS) if (Number.isFinite(saved[f.k])) C.params[f.k] = saved[f.k];
@@ -143,7 +145,7 @@ export function initCookie(ctx) {
       $("cookie-empty").hidden = true;
       renderAll();
       const warns = data.checks.filter((x) => x.level === "warn").length;
-      setStatus("Ready: cut shape " + data.size.cut_w + " x " + data.size.cut_h + " mm"
+      setStatus((data.photo ? data.photo.message + ". " : "") + "Ready: cut shape " + data.size.cut_w + " x " + data.size.cut_h + " mm"
         + (data.can_export ? "" : ", but the download is blocked (see Checks)") + (warns ? ", " + warns + " thing" + (warns > 1 ? "s" : "") + " to look at." : "."), data.can_export ? "ok" : "err");
     } catch (e) {
       if (e.name === "Superseded") return;
@@ -183,10 +185,13 @@ export function initCookie(ctx) {
 
   function renderNote() {
     const n = $("cookie-note");
-    n.classList.toggle("warn", C.photo);
-    n.textContent = C.photo
-      ? "This looks like a photo. Photos are not supported yet in cookie mode, so the result may be rough. A line drawing or a logo works best."
-      : "Cookie mode works with drawings and logos (SVG, PNG, JPEG, WEBP). Photos are not supported yet: use a line drawing or a logo.";
+    const ph = C.last && C.last.photo;
+    n.classList.toggle("warn", false);
+    n.textContent = ph
+      ? ph.message + ". The orange outline on your photo is the cut shape; check that it is the thing you want. A photo with one subject on a plain background works best."
+      : C.photo
+        ? "This looks like a photo. We look for a face or the main subject, cut around it and keep its strongest lines. If we cannot find a clear subject, the download stays off."
+        : "Cookie mode works with line drawings and logos (SVG, PNG, JPEG, WEBP). Photos work too if they have one clear subject.";
   }
   function renderCaption() {
     const d = C.last;
@@ -195,7 +200,7 @@ export function initCookie(ctx) {
         + d.size.tris.toLocaleString() + " triangles" + (C.secs ? ", " + C.secs.toFixed(1) + " s" : "")
       : "";
   }
-  function renderAll() { renderChecks(); renderCaption(); renderNote(); syncUpload(); drawAll(); }
+  function renderAll() { renderChecks(); renderCaption(); renderNote(); syncUpload(); syncPhotoPane(); drawAll(); }
 
   /* ---------- drawing ---------- */
   function setup(cv) {
@@ -272,9 +277,42 @@ export function initCookie(ctx) {
     g.strokeStyle = "rgba(255,240,220,0.35)"; g.lineWidth = Math.max(1, off * 0.8); g.lineJoin = "round"; g.stroke(ribs);
     g.restore();
   }
+  /* The photo with the cut outline and stamp lines on top, in the photo's own orientation (not mirrored). */
+  async function loadBmp() {
+    const f = currentFile();
+    if (!f || C.bmpFor === f) return;
+    C.bmpFor = f; C.bmp = null;
+    try { const b = await createImageBitmap(f); if (C.bmpFor === f) { C.bmp = b; drawPhoto(); } } catch (e) { /* no preview of the photo */ }
+  }
+  function syncPhotoPane() {
+    const ph = C.last && C.last.photo;
+    $("cookie-pane-photo").hidden = !ph;
+    $("cv-photo").hidden = !ph;
+    stage.classList.toggle("has-photo", !!ph);
+    if (ph) {
+      loadBmp();
+      if (C.photoViewFor !== currentFile()) { C.photoViewFor = currentFile(); if (narrow.matches) setView("photo"); }
+    } else if (stage.dataset.view === "photo") setView(narrow.matches ? "cookie" : "both");
+  }
+  function drawPhoto() {
+    const cv = $("cookie-photo");
+    const { g, W, H } = setup(cv);
+    const d = C.last, ph = d && d.photo;
+    if (!ph || !C.bmp) return;
+    const capH = 22, pad = 16;
+    const k = Math.min((W - 2 * pad) / C.bmp.width, (H - 2 * pad - capH) / C.bmp.height);
+    const w = C.bmp.width * k, h = C.bmp.height * k, x0 = (W - w) / 2, y0 = pad + (H - 2 * pad - capH - h) / 2;
+    g.drawImage(C.bmp, x0, y0, w, h);
+    const trace = (pts, close) => { pts.forEach(([x, y], i) => (i ? g.lineTo(x0 + x * w, y0 + y * h) : (g.beginPath(), g.moveTo(x0 + x * w, y0 + y * h)))); if (close) g.closePath(); };
+    g.lineJoin = "round"; g.lineCap = "round";
+    g.strokeStyle = "rgba(0,0,0,0.55)"; g.lineWidth = 5; trace(ph.overlay.outline, true); g.stroke();
+    g.strokeStyle = css("--color-accent"); g.lineWidth = 2.5; trace(ph.overlay.outline, true); g.stroke();
+    for (const ln of ph.overlay.lines) { g.strokeStyle = "rgba(0,0,0,0.5)"; g.lineWidth = 4; trace(ln, false); g.stroke(); g.strokeStyle = "#fff"; g.lineWidth = 2; trace(ln, false); g.stroke(); }
+  }
   function drawAll() {
     drawBack();
     drawCookie();
+    drawPhoto();
   }
 
   /* ---------- upload, drag and drop, view switch ---------- */
@@ -282,7 +320,7 @@ export function initCookie(ctx) {
     const f = currentFile();
     const b = $("cookie-upload");
     b.textContent = f ? "Change picture" : "Upload a picture";
-    b.title = f ? f.name : "SVG, PNG, JPEG or WEBP. A line drawing or a logo works best; photos are not supported yet.";
+    b.title = f ? f.name : "SVG, PNG, JPEG or WEBP. A line drawing or a logo works best; a photo needs one clear subject.";
   }
   async function useFile(f) {
     if (!f) return;
@@ -303,10 +341,10 @@ export function initCookie(ctx) {
   });
   const setView = (v) => {
     stage.dataset.view = v;
-    for (const id of ["both", "back", "cookie"]) $("cv-" + id).setAttribute("aria-pressed", String(id === v));
+    for (const id of ["photo", "both", "back", "cookie"]) $("cv-" + id).setAttribute("aria-pressed", String(id === v));
     requestAnimationFrame(drawAll);
   };
-  for (const id of ["both", "back", "cookie"]) $("cv-" + id).onclick = () => setView(id);
+  for (const id of ["photo", "both", "back", "cookie"]) $("cv-" + id).onclick = () => setView(id);
   new ResizeObserver(() => drawAll()).observe(stage);
 
   /* ---------- download ---------- */

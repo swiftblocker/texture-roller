@@ -100,3 +100,10 @@ Feature 6/10 (from 4), skill 4/10 (from 3). Squint 0.738 -> 0.743. Reports: redt
 - Rebuild: all 2D offsets and morphology in engine/cookie.py run on a raster (one distance field per shape, every offset a level of it); shapely only builds polygons and does grid-snapped unions/differences. A test fixture makes buffer and grid-less overlays raise, so they cannot come back.
 - Verified in the real browser runtime: heart 40-140 mm (15 sizes) and a face drawing at 3 sizes, zero crashes, 3-7.6 s each; full app flow (upload, preview, views, size change, a valid 1.1 MB STL) on desktop and at 390 px phone width.
 - Phone fixes: status line under Upload, one view at a time, settings right after the preview, 44 px targets, range hints on bad values.
+
+## 2026-11-25 Cookie cutter photos (owner: "try a hard test photo ... red team the result and fix")
+- Four hard public photos (cat close-up, astronaut, coffee cup, rocket at night) all became ragged blobs from the drawing path (one brightness cut), 0 stamp lines, can_export true, 9 green checks. Red team: rt_photo.md (local).
+- Fix: engine/photo.py. Photos never take the drawing path: face -> head-shaped cookie; clear subject (grabCut) -> its outline; else a round cookie with the photo's main lines; too few lines -> refused in plain words with the download off. Lines feed the drawing engine, so all clay/print/mirror rules apply. OpenCV loads on demand in the browser.
+- New outline checks for every cutter: thin neck (block), ragged edge and deep bites (warn). Preview draws the cut outline over the photo.
+- Found in the browser test: the refusal depended on cookie size (rocket refused at 80 mm, accepted at 110). Now "clear subject?" and "enough lines?" are decided at a fixed 80 mm; test added. Unreadable files get a plain message instead of raw Python text.
+- Verified in the real browser runtime: coffee/astronaut/cat/rocket at several sizes and the heart drawing 40-140 mm, zero crashes, 3-7 s; full app flow with the on-demand OpenCV load (about 11 s first time).

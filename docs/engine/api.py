@@ -144,3 +144,15 @@ def test_strip(params: dict, out_dir: str | None = None) -> dict:
     if out_dir:
         return ex.write_dir(r, out_dir)
     return r
+
+
+def cookie_preview(params: dict, upload: bytes | None = None, upload_name: str | None = None) -> dict:
+    """Cookie cutter tab: outline + inside lines + back bridges as mm polygons, plain-word checks."""
+    from . import cookie as cookiemod
+    return cookiemod.preview(params, upload, upload_name)
+
+
+def cookie_export(params: dict, upload: bytes | None = None, upload_name: str | None = None) -> dict:
+    """-> {stl: bytes, sidecar: dict, blocked: bool, checks, filename}."""
+    from . import cookie as cookiemod
+    return cookiemod.export_bytes(params, upload, upload_name)

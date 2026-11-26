@@ -171,6 +171,60 @@ async def test_strip(params: str = Form(...)):
     return _run_export("test_strip", _parse(params), None, None)
 
 
+# ---- cookie cutter tab: results are held in memory (nothing is written to disk) ----
+COOKIE_KEEP = {}
+
+
+@app.post("/api/cookie_preview")
+async def cookie_preview(params: str = Form(...), art: Optional[UploadFile] = File(None)):
+    p = _parse(params)
+    data, name = await _read_upload(art)
+    if ENGINE is None:
+        raise HTTPException(503, "engine not loaded")
+    try:
+        return JSONResponse(ENGINE.cookie_preview(p, data, name))
+    except Exception as exc:
+        raise HTTPException(422, f"{type(exc).__name__}: {exc}")
+
+
+@app.post("/api/cookie_export")
+async def cookie_export(params: str = Form(...), art: Optional[UploadFile] = File(None)):
+    p = _parse(params)
+    data, name = await _read_upload(art)
+    if ENGINE is None:
+        raise HTTPException(503, "engine not loaded")
+    try:
+        r = ENGINE.cookie_export(p, data, name)
+    except Exception as exc:
+        raise HTTPException(422, f"{type(exc).__name__}: {exc}")
+    out = {"blocked": bool(r["blocked"]), "checks": r["checks"], "filename": r["filename"], "bytes": len(r["stl"])}
+    if not r["blocked"]:
+        key = time.strftime("%Y%m%d-%H%M%S") + "-%d" % len(COOKIE_KEEP)
+        COOKIE_KEEP[key] = (r["stl"], r["filename"], r["sidecar"])
+        while len(COOKIE_KEEP) > 6:
+            COOKIE_KEEP.pop(next(iter(COOKIE_KEEP)))
+        out["id"] = key
+        out["download"] = f"/api/cookie_download/{key}"
+        out["sidecar"] = f"/api/cookie_sidecar/{key}"
+    return JSONResponse(out)
+
+
+@app.get("/api/cookie_download/{key}")
+def cookie_download(key: str):
+    from fastapi.responses import Response
+    if key not in COOKIE_KEEP:
+        raise HTTPException(404, "no such export")
+    stl, fname, _side = COOKIE_KEEP[key]
+    return Response(stl, media_type="model/stl", headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@app.get("/api/cookie_sidecar/{key}")
+def cookie_sidecar(key: str):
+    if key not in COOKIE_KEEP:
+        raise HTTPException(404, "no such export")
+    return JSONResponse(COOKIE_KEEP[key][2])
+
+
 @app.get("/api/download/{stamp}")
 def download(stamp: str):
     if not re.fullmatch(r"[0-9]{8}-[0-9]{6}(-[0-9]+)?", stamp):

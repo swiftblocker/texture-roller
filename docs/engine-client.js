@@ -11,6 +11,8 @@
  *   testStrip(params)                -> same shape
  *   solveRepeat(tileWidth)           -> [{diameter,n_around,C,stretch_pct}]
  *   fitPortrait(params, file)        -> {diameter,n_around,n_along,face_found}
+ *   cookiePreview(params, file)      -> {size, checks, can_export, geom, timings}; rejects "Superseded" like preview
+ *   cookieExport(params, file)       -> {blocked, checks, filename, bytes, href}
  * All URLs are relative, so a GitHub Pages subpath works. */
 
 /* Phones have far less RAM than a computer, so the export mesh is coarser there. */
@@ -76,6 +78,7 @@ async function httpEngine(onProgress) {
     throw new Error(msg);
   };
   let ctl = null;
+  let cctl = null;
   let note = null;
   try {
     const s = await (await fetch("api/status")).json();
@@ -103,6 +106,20 @@ async function httpEngine(onProgress) {
     testStrip: async (params) => done(await fetch("api/test_strip", { method: "POST", body: form(params, null) })),
     solveRepeat: async (tw) => check(await fetch("api/solve_repeat?tile_width=" + encodeURIComponent(tw))),
     fitPortrait: async (params, file) => check(await fetch("api/fit_portrait", { method: "POST", body: form(params, file) })),
+    cookiePreview: async (params, file) => {
+      if (cctl) cctl.abort();
+      cctl = new AbortController();
+      try {
+        return await check(await fetch("api/cookie_preview", { method: "POST", body: form(params, file), signal: cctl.signal }));
+      } catch (e) {
+        if (e.name === "AbortError") { const s = new Error("Superseded"); s.name = "Superseded"; throw s; }
+        throw e;
+      }
+    },
+    cookieExport: async (params, file) => {
+      const j = await check(await fetch("api/cookie_export", { method: "POST", body: form(params, file) }));
+      return { ...j, href: j.blocked ? null : j.download };
+    },
   };
 }
 
@@ -165,6 +182,21 @@ async function pyodideEngine(onProgress) {
     pump();
   };
 
+  // Cookie previews: same rule, one waiting behind the running one, newest wins.
+  let cRunning = false;
+  let cPending = null;
+  const cPump = async () => {
+    if (cRunning || !cPending) return;
+    const job = cPending; cPending = null; cRunning = true;
+    try {
+      const m = await call({ op: "cookie_preview", params: JSON.stringify(job.params), upload: await bytesOf(job.file), name: job.file ? job.file.name : null });
+      job.resolve(JSON.parse(m.json));
+    } catch (e) { job.reject(e); }
+    cRunning = false;
+    cPump();
+  };
+  let cookieUrl = null;
+
   let blobUrl = null;
   let blobUrl3 = null;
   let stlUrls = [];
@@ -202,5 +234,17 @@ async function pyodideEngine(onProgress) {
     testStrip: async (params) => asDownload(await call({ op: "test_strip", params: JSON.stringify(params) }), "roller-test-strip"),
     solveRepeat: async (tw) => JSON.parse((await call({ op: "solve_repeat", tw, dmin: 25, dmax: 100, mx: 12 })).json),
     fitPortrait: async (params, file) => JSON.parse((await call({ op: "fit_portrait", params: JSON.stringify(params), upload: await bytesOf(file) })).json),
+    cookiePreview: (params, file) => new Promise((resolve, reject) => {
+      if (cPending) { const s = new Error("Superseded"); s.name = "Superseded"; cPending.reject(s); }
+      cPending = { params, file, resolve, reject };
+      cPump();
+    }),
+    cookieExport: async (params, file) => {
+      const m = await call({ op: "cookie_export", params: JSON.stringify(params), upload: await bytesOf(file), name: file ? file.name : null });
+      const j = JSON.parse(m.json);
+      if (cookieUrl) { URL.revokeObjectURL(cookieUrl); cookieUrl = null; }
+      if (m.zip && !j.blocked) cookieUrl = URL.createObjectURL(new Blob([m.zip], { type: "model/stl" }));
+      return { ...j, href: cookieUrl };
+    },
   };
 }

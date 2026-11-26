@@ -34,3 +34,4 @@ data/fonts/shrikhand.ttf
 data/cascades/haarcascade_frontalface_alt2.xml
 data/cascades/haarcascade_frontalface_default.xml
 data/cascades/haarcascade_profileface.xml
+cookie.py

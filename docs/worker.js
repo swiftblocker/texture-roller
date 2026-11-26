@@ -1,12 +1,12 @@
 /* Web Worker: runs the Python engine in Pyodide, entirely in the browser.
- * Messages in:  {id, op, ...args}   op = preview | export | test_strip | solve_repeat | patterns | fit_portrait
+ * Messages in:  {id, op, ...args}   op = preview | export | test_strip | solve_repeat | patterns | fit_portrait | cookie_preview | cookie_export
  * Messages out: {type:"progress", text, done, total}, {type:"ready"}, {type:"fatal", message},
  *               {type:"result", id, ok, json, zip, error}
  * All URLs are relative to this file so it works under a GitHub Pages subpath. */
 const PYODIDE_VERSION = "0.27.7";
 const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v" + PYODIDE_VERSION + "/full/";
 const BASE = new URL(".", self.location.href);
-const PACKAGES = ["numpy", "scipy", "scikit-image", "pillow", "fonttools"];
+const PACKAGES = ["numpy", "scipy", "scikit-image", "pillow", "fonttools", "shapely"];
 const PIP = ["svgelements", "potracer", "trimesh"];
 
 importScripts(PYODIDE + "pyodide.js");
@@ -110,6 +110,15 @@ def op_test_strip(p):
     shutil.rmtree(d, ignore_errors=True)
     return _dumps({"rules": r.get("rules", []), "blocked": bool(r.get("blocked")), "files": _names(_zip)})
 
+def op_cookie_preview(p, u, name):
+    return _dumps(api.cookie_preview(json.loads(p), _up(u), name))
+
+def op_cookie_export(p, u, name):
+    global _zip
+    r = api.cookie_export(json.loads(p), _up(u), name)
+    _zip = bytes(r["stl"])      # the STL travels back in the same slot as the roller zip
+    return _dumps({"blocked": bool(r["blocked"]), "checks": r["checks"], "filename": r["filename"], "sidecar": r["sidecar"], "bytes": len(_zip)})
+
 def op_solve(tw, dmin, dmax, mx):
     return _dumps(api.solve_repeat(float(tw), float(dmin), float(dmax), int(mx)))
 
@@ -169,6 +178,8 @@ function run(m) {
     case "solve_repeat": return out("op_solve", m.tw, m.dmin, m.dmax, m.mx);
     case "fit_portrait": return out("op_fit", m.params, m.upload || null);
     case "patterns": return out("op_patterns");
+    case "cookie_preview": return out("op_cookie_preview", m.params, m.upload || null, m.name || null);
+    case "cookie_export": return out("op_cookie_export", m.params, m.upload || null, m.name || null);
     default: throw new Error("unknown op " + m.op);
   }
 }
@@ -194,13 +205,15 @@ self.onmessage = async (ev) => {
     await ensureCv(m);
     const json = run(m);
     let zip = null, m3 = null, stls = [];
-    if (m.op === "export" || m.op === "test_strip") {
+    if (m.op === "export" || m.op === "test_strip" || m.op === "cookie_export") {
       const proxy = py.globals.get("_zip");
       if (proxy && proxy.toJs) {
         const u8 = proxy.toJs();
         zip = new Uint8Array(u8);
         proxy.destroy();
       }
+    }
+    if (m.op === "export" || m.op === "test_strip") {
       const p3 = py.globals.get("_m3");
       if (p3 && p3.toJs) {
         const b = p3.toJs();

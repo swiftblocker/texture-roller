@@ -1,10 +1,11 @@
 {
-  "version": "05b8cbc5962c",
+  "version": "574287652be2",
   "files": [
     "engine/__init__.py",
     "engine/api.py",
     "engine/art.py",
     "engine/body.py",
+    "engine/cookie.py",
     "engine/data/cascades/haarcascade_frontalface_alt2.xml",
     "engine/data/cascades/haarcascade_frontalface_default.xml",
     "engine/data/cascades/haarcascade_profileface.xml",

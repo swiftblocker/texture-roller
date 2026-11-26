@@ -1,6 +1,7 @@
 import * as THREE from "./vendor/three.module.js";
 import { OrbitControls } from "./vendor/OrbitControls.js";
 import { createEngine } from "./engine-client.js";
+import { initCookie } from "./cookie.js";
 
 /* ---------- parameters ---------- */
 const DEFAULTS = {
@@ -1197,5 +1198,28 @@ $("export").onclick = () => doExport("full");
 $("strip-btn").onclick = () => doExport("strip");
 new ResizeObserver(() => drawSlab()).observe($("slab-wrap"));
 
+/* ---------- Roller | Cookie cutter ---------- */
+const cookie = initCookie({ engine, S, $, el, css, toEngineFile, mb, dlLink });
+let mode = "roller";
+try { if (localStorage.getItem("roller.mode") === "cookie") mode = "cookie"; } catch (e) { /* ignore */ }
+let rollerStarted = false;
+function setMode(m, remember = true) {
+  mode = m;
+  const ck = m === "cookie";
+  document.body.dataset.mode = m;
+  $("mode-roller").setAttribute("aria-pressed", String(!ck));
+  $("mode-cookie").setAttribute("aria-pressed", String(ck));
+  document.querySelector("main.shell:not(.cookie-shell)").hidden = ck;
+  $("cookie-shell").hidden = !ck;
+  $("bar-sub").textContent = ck ? "Cookie cutter and stamp generator" : "Clay texture roller generator";
+  document.title = ck ? "Roller - Cookie cutter" : "Roller";
+  $("busy").textContent = "";
+  if (remember) { try { localStorage.setItem("roller.mode", m); } catch (e) { /* ignore */ } }
+  if (ck) cookie.show();
+  else { cookie.hide(); if (!rollerStarted) { rollerStarted = true; schedule(); } else if (S.last) { drawSlab(); } }
+}
+$("mode-roller").onclick = () => setMode("roller");
+$("mode-cookie").onclick = () => setMode("cookie");
+
 showEmpty("Waiting for the first preview.", false);
-schedule();
+setMode(mode, false);

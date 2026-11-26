@@ -86,3 +86,10 @@ Feature 6/10 (from 4), skill 4/10 (from 3). Squint 0.738 -> 0.743. Reports: redt
 - Nose (owner: "nostrils are huge", "dainty and thin", "yours is too high"): nostril dots and shadow bars replaced by one 1.3 mm hook down the shadow side, turning under the tip. Its foot sits on the bottom of the nostril shadow measured in the photo, lifted only for a 1.5 mm clay gap. Measured on the test photo: nose bottom within 0.2 mm of the photo.
 - Browser: Pyodide loads opencv-python (11 MB) only the first time a group photo is used. The cascade files ship in engine/data/cascades (OpenCV licence).
 - Deployed without an in-browser test of group mode (owner's choice); engine tests use public sample images only. The owner's family photo and everything made from it stay in app/out (not in git).
+
+## 2026-11-25 Cookie cutter tab (owner: "do a spike on building a tab for a cookie cutter engine", then "review and deploy")
+- New tab (header switch Roller | Cookie cutter, remembered) for drawings and logos; photos come later (the spike's photo results were weak, red team: rt_cookie.md, local).
+- engine/cookie.py: same upload and tracing as the roller -> outline, inside lines, small dots -> cutting wall (14 mm, 0.86 mm tip = two 0.4 mm lines, widening to 1.6 mm), back rim, stamp ribs 1.2 mm reaching 2.5 mm into 6 mm dough, back bars 6 x 2.4 mm with no free run over 35 mm and every rib held twice. Mirror flip so the cookie reads the right way (letter R test). Dough-release rules run last: no closed pocket under 5 mm, 3 mm of dough between ribs.
+- Mesh built with shapely plus its own ear-clipping triangulation (Pyodide has no earcut/triangle/manifold). Cookie tests pass on shapely 2.0.6, the browser's version.
+- Download blocked only for a broken mesh or a floating piece.
+- Not tested in a browser before deploying; no cutter printed yet.

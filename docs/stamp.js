@@ -62,6 +62,7 @@ export function initStamp(ctx) {
   }
   function changed(k, v, live) {
     P[k] = v;
+    if (k === "art_source") $("stamp-override").checked = false;      // R86: a new art choice starts unticked
     clearResult();
     save();
     syncEnabled();
@@ -376,15 +377,24 @@ export function initStamp(ctx) {
     $("stamp-count").textContent = nb ? nb + " stop" : nw ? nw + " to look at" : "all clear";
     updateExport();
   }
+  const overrideOn = () => !!(T.last && !T.last.can_export && $("stamp-override").checked);
+  $("stamp-override").addEventListener("change", () => updateExport());
   function updateExport() {
     const d = T.last;
     const b = $("stamp-export");
     const invalid = !!document.querySelector("#stamp-params input.invalid");
-    b.disabled = T.exporting || T.busy || invalid || !d || !d.can_export;
+    /* R86 export anyway: shows while a stop item is showing, clears when the stops are gone. */
+    const stop = !!(d && !d.can_export);
+    $("stamp-override-wrap").hidden = !stop;
+    if (!stop) $("stamp-override").checked = false;
+    const over = overrideOn();
+    b.disabled = T.exporting || T.busy || invalid || !d || (!d.can_export && !over);
+    b.textContent = over ? "Download anyway" : "Download zip";
     const note = $("stamp-export-note");
-    note.classList.toggle("block", !!(d && !d.can_export));
+    note.classList.toggle("block", !!(d && !d.can_export && !over));
     note.textContent = T.exporting ? "Building the files..." : invalid ? "Fix the number marked in red first." : T.busy ? "Updating the preview..."
-      : !d ? "" : d.can_export ? "The zip has the stamp, the knob, a plated 3MF, a clay preview and a print sheet." : "The download is blocked until the stop items above are fixed.";
+      : !d ? "" : d.can_export ? "The zip has the stamp, the knob, a plated 3MF, a clay preview and a print sheet."
+        : over ? "Export anyway is ticked. The files will be marked -override and list the stop items." : "The download is blocked until the stop items above are fixed, or you tick Export anyway.";
   }
   function renderCaption() {
     const d = T.last;
@@ -525,6 +535,7 @@ export function initStamp(ctx) {
     const ready = await shrink(await toEngineFile(f));
     if (ticket !== T.uploadTicket) return;
     T.file = ready;
+    $("stamp-override").checked = false;
     clearResult();
     T.sketchTouched = false;
     Object.assign(P, { art_source: "upload", art_style: photo ? "portrait" : "trace", art_scale: 100, art_shift_x: 0, art_shift_y: 0 });
@@ -559,7 +570,8 @@ export function initStamp(ctx) {
   $("stamp-export").onclick = async () => {
     if (T.exporting) return;
     const res = $("stamp-export-result");
-    const snap = { ...P }, file = snap.art_source === "upload" ? T.file : null, gen = T.gen;   // what was on screen at the click
+    const anyway = overrideOn();
+    const snap = { ...P, ...(anyway ? { export_anyway: true } : {}) }, file = snap.art_source === "upload" ? T.file : null, gen = T.gen;   // what was on screen at the click
     T.exporting = true;
     res.replaceChildren(el("span", { text: "Building the files. This takes a few seconds; the page stays usable." }));
     updateExport();
@@ -572,6 +584,10 @@ export function initStamp(ctx) {
         const why = (j.checks || []).filter((c) => c.level === "block").map((c) => c.text);
         res.append(el("span", { class: "err", text: "Not exported. " + (why.join(" ") || "R85: The model is not printable.") }));
       } else {
+        if (j.override) {
+          const r85 = (j.checks || []).find((c) => c.id === "R85");
+          res.append(el("p", { class: "warn-line", text: "Exported anyway over: " + [...new Set(j.override.ids)].join(", ") + ". The mesh " + (r85 && r85.level === "block" ? "is NOT watertight." : "came out watertight.") }));
+        }
         const a = dlLink(j.href, j.filename, "Save " + j.filename + ", " + mb(j.bytes), true);
         res.append(a);
         a.click();

@@ -89,7 +89,7 @@ async function httpEngine(onProgress) {
   } catch (e) { /* ignore */ }
   const done = async (r) => {
     const j = await check(r);
-    return { ...j, href: j.download, filename: "roller-" + j.id + ".zip" };
+    return { ...j, href: j.download, filename: "roller-" + j.id + (j.override ? "-override" : "") + ".zip" };
   };
   return {
     backend: "http",
@@ -241,14 +241,15 @@ async function pyodideEngine(onProgress) {
     if (m.zip && !j.blocked) blobUrl = URL.createObjectURL(new Blob([m.zip], { type: "application/zip" }));
     if (m.m3 && !j.blocked) blobUrl3 = URL.createObjectURL(new Blob([m.m3], { type: "model/3mf" }));
     const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+    const ov = j.override ? "-override" : "";      // R86: an export anyway is marked in every file name
     return {
-      ...j, href: blobUrl, filename: prefix + "-" + stamp + ".zip",
-      href3mf: blobUrl3, filename3mf: prefix + "-" + stamp + ".3mf",
+      ...j, href: blobUrl, filename: prefix + "-" + stamp + ov + ".zip",
+      href3mf: blobUrl3, filename3mf: prefix + "-" + stamp + ov + ".3mf",
       zipBytes: m.zip ? m.zip.length : 0, bytes3mf: m.m3 ? m.m3.length : 0,
       stls: j.blocked ? [] : (m.stls || []).map((f) => {
         const href = URL.createObjectURL(new Blob([f.data], { type: "model/stl" }));
         stlUrls.push(href);
-        return { href, bytes: f.data.length, filename: prefix + "-" + stamp + (f.name.match(/_[ab]\.stl$/i) ? f.name.slice(-6) : ".stl") };
+        return { href, bytes: f.data.length, filename: prefix + "-" + stamp + (f.name.match(/_[ab](-override)?\.stl$/i) ? f.name.match(/_[ab]/i)[0] : "") + ov + ".stl" };
       }),
     };
   };

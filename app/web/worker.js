@@ -99,7 +99,7 @@ def op_export(p, u, name):
         shutil.rmtree(d, ignore_errors=True)
     _zip = bytes(z)
     _pick3mf(_zip)
-    return _dumps({"rules": r.get("rules", []), "blocked": bool(r.get("blocked")), "files": _names(_zip)})
+    return _dumps({"rules": r.get("rules", []), "blocked": bool(r.get("blocked")), "files": _names(_zip), "override": r.get("override"), "message": r.get("message")})
 
 def op_test_strip(p):
     global _zip, _m3
@@ -117,7 +117,7 @@ def op_cookie_export(p, u, name):
     global _zip
     r = api.cookie_export(json.loads(p), _up(u), name)
     _zip = bytes(r["stl"])      # the STL travels back in the same slot as the roller zip
-    return _dumps({"blocked": bool(r["blocked"]), "checks": r["checks"], "filename": r["filename"], "sidecar": r["sidecar"], "bytes": len(_zip)})
+    return _dumps({"blocked": bool(r["blocked"]), "checks": r["checks"], "filename": r["filename"], "sidecar": r["sidecar"], "bytes": len(_zip), "override": r.get("override"), "watertight": r.get("watertight")})
 
 def op_stamp_preview(p, u, name):
     return _dumps(api.stamp_preview(json.loads(p), _up(u), name))
@@ -127,7 +127,7 @@ def op_stamp_export(p, u, name):
     r = api.stamp_export(json.loads(p), _up(u), name)
     _zip = r["zip"]             # the zip travels back in the same slot as the roller zip (no second copy kept here)
     del r["zip"]
-    return _dumps({"blocked": bool(r["blocked"]), "checks": r["checks"], "filename": r["filename"], "files": r["files"], "bytes": len(_zip), "stl_bytes": r.get("bytes", 0), "triangles": r.get("triangles", 0)})
+    return _dumps({"blocked": bool(r["blocked"]), "checks": r["checks"], "filename": r["filename"], "files": r["files"], "bytes": len(_zip), "stl_bytes": r.get("bytes", 0), "triangles": r.get("triangles", 0), "override": r.get("override")})
 
 def op_solve(tw, dmin, dmax, mx):
     return _dumps(api.solve_repeat(float(tw), float(dmin), float(dmax), int(mx)))

@@ -87,6 +87,8 @@ class Params:
     text_sep: str = "dot"
     text_gap: float = 5.0
     text_row_gap: float = 6.0
+    # R86 export anyway: read by the export entry points only. Not in to_dict(), so no preview, cache key or echo sees it.
+    export_anyway: bool = False
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "Params":
@@ -134,10 +136,13 @@ class Params:
         return p
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d.pop("export_anyway", None)
+        return d
 
     def replace(self, **kw) -> "Params":
         d = self.to_dict()
+        d["export_anyway"] = self.export_anyway
         d.update(kw)
         return Params.from_dict(d)
 

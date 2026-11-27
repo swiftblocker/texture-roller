@@ -197,7 +197,7 @@ async def cookie_export(params: str = Form(...), art: Optional[UploadFile] = Fil
         r = ENGINE.cookie_export(p, data, name)
     except Exception as exc:
         raise HTTPException(422, f"{type(exc).__name__}: {exc}")
-    out = {"blocked": bool(r["blocked"]), "checks": r["checks"], "filename": r["filename"], "bytes": len(r["stl"])}
+    out = {"blocked": bool(r["blocked"]), "checks": r["checks"], "filename": r["filename"], "bytes": len(r["stl"]), "override": r.get("override"), "watertight": r.get("watertight")}
     if not r["blocked"]:
         key = time.strftime("%Y%m%d-%H%M%S") + "-%d" % len(COOKIE_KEEP)
         COOKIE_KEEP[key] = (r["stl"], r["filename"], r["sidecar"])
@@ -252,7 +252,7 @@ async def stamp_export(params: str = Form(...), art: Optional[UploadFile] = File
     except Exception as exc:
         raise HTTPException(422, f"{type(exc).__name__}: {exc}")
     out = {"blocked": bool(r["blocked"]), "checks": r["checks"], "filename": r["filename"], "bytes": len(r["zip"]),
-           "files": r["files"], "stl_bytes": r.get("bytes", 0)}
+           "files": r["files"], "stl_bytes": r.get("bytes", 0), "override": r.get("override")}
     if not r["blocked"]:
         key = time.strftime("%Y%m%d-%H%M%S") + "-%d" % len(STAMP_KEEP)
         STAMP_KEEP[key] = (r["zip"], r["filename"])
@@ -280,7 +280,8 @@ def download(stamp: str):
     if not d.is_dir():
         raise HTTPException(404, "no such export")
     zpath = shutil.make_archive(str(OUT / f"_zip_{stamp}"), "zip", root_dir=str(d))
-    return FileResponse(zpath, media_type="application/zip", filename=f"roller-{stamp}.zip")
+    marked = any("-override" in f.name for f in d.iterdir())      # R86: an export anyway is marked in its name
+    return FileResponse(zpath, media_type="application/zip", filename=f"roller-{stamp}{'-override' if marked else ''}.zip")
 
 
 @app.get("/api/solve_repeat")

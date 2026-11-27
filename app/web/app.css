@@ -233,6 +233,11 @@ input[type="checkbox"] { accent-color: var(--color-accent); width: 16px; height:
 .rule.warn { box-shadow: inset 3px 0 0 var(--color-warn); }
 .rule.warn .act { color: var(--color-warn); }
 .rule.info .msg { color: var(--color-ink-2); }
+.override { display: flex; gap: 10px; align-items: flex-start; margin: 10px 16px 12px; padding: 10px 12px; border: 1px solid var(--color-warn); border-radius: var(--radius); font-size: var(--step--1); line-height: 1.35; cursor: pointer; }
+.override[hidden] { display: none; }
+.override input { margin-top: 2px; flex: none; width: 18px; height: 18px; accent-color: var(--color-warn); }
+.override:has(input:checked) { background: var(--color-block-bg); }
+.export-result .warn-line { color: var(--color-warn); font-weight: 600; }
 .rules-empty { padding: 8px 16px; color: var(--color-muted); font-size: var(--step--1); }
 
 .export { border-top: 1px solid var(--color-rule-strong); padding: 12px; display: grid; grid-template-columns: 1fr auto; gap: 8px; background: var(--color-panel); }

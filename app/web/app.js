@@ -277,6 +277,7 @@ function artSource() {
     name.textContent = up ? (S.upload ? S.upload.name : "No file chosen. SVG is clean-up only, drawings are traced, photos of people become a pen sketch.") : "";
   };
   sel.addEventListener("change", () => {
+    resetOverride();
     if (sel.value === "upload") setParam("art_source", "upload");
     else setParam("art_source", "pattern:" + sel.value);
     sync();
@@ -457,7 +458,7 @@ function buildForm() {
     form.append(el("details", { class: "group", open: MQ_PHONE.matches ? g.name === "Size" : g.open }, el("summary", { text: g.name }), body));
   }
   const reset = el("div", { class: "group-body" }, el("button", { type: "button", class: "btn", text: "Reset to the default part", onclick: () => {
-    S.params = { ...DEFAULTS }; S.upload = null;
+    S.params = { ...DEFAULTS }; S.upload = null; resetOverride();
     form.replaceChildren(); readoutEls = {}; buildForm(); syncEnabled(); readouts(); schedule(); syncStyleUI();
     try { localStorage.removeItem("roller.params"); } catch (e) { /* ignore */ }
   } }));
@@ -581,19 +582,34 @@ function renderRules() {
   $("sec-rules").classList.toggle("has-block", blockers.length > 0);
   if (blockers.length && !S.hadBlock && MQ_NARROW.matches) setOpen("rules", true);
   S.hadBlock = blockers.length > 0;
-  $("export").disabled = !can;
+  /* R86 export anyway: the box shows while there is a stop item and clears itself when the stops are gone. */
+  const wrap = $("override-wrap");
+  wrap.hidden = can;
+  if (can) $("override").checked = false;
+  const over = overrideOn();
+  $("export").disabled = !can && !over;
   exportLabel();
   const note = $("export-note");
-  note.textContent = can ? "No blocking rules." : "Export is blocked by " + blockers.join(", ") + ".";
-  note.classList.toggle("block", !can);
+  note.textContent = can ? "No blocking rules." : over ? "Export anyway is ticked. The files will be marked -override and list " + blockers.join(", ") + "."
+    : "Export is blocked by " + blockers.join(", ") + ".";
+  note.classList.toggle("block", !can && !over);
 }
+/* The tick only counts while a stop item is showing. It resets when the art or the upload changes. */
+const overrideOn = () => $("override").checked && !!(S.blockers && S.blockers.length);
+function resetOverride() {
+  const c = $("override");
+  if (!c.checked) return;
+  c.checked = false;
+  if (S.last) renderRules();
+}
+$("override").addEventListener("change", () => { if (S.last) renderRules(); });
 
 /* The Export button shows the blocking rule id on narrow screens, where it lives in the sticky bar. */
 function exportLabel() {
   const b = $("export");
-  const blocked = S.last && S.blockers && S.blockers.length > 0;
+  const blocked = S.last && S.blockers && S.blockers.length > 0 && !overrideOn();
   b.classList.toggle("is-blocked", !!blocked);
-  b.textContent = MQ_NARROW.matches && blocked
+  b.textContent = overrideOn() ? "Download anyway" : MQ_NARROW.matches && blocked
     ? "Blocked " + S.blockers.slice(0, 2).join(", ") + (S.blockers.length > 2 ? " +" + (S.blockers.length - 2) : "")
     : "Download STL";
 }
@@ -884,12 +900,16 @@ async function doExport(kind) {
   if (MQ_NARROW.matches) document.querySelector(".export").scrollIntoView({ block: "start" });
   try {
     const file = S.params.art_source === "upload" ? S.upload : null;
-    const j = kind === "strip" ? await engine.testStrip({ ...S.params }) : await engine.exportZip({ ...S.params }, file);
+    const anyway = kind !== "strip" && overrideOn();
+    const j = kind === "strip" ? await engine.testStrip({ ...S.params }) : await engine.exportZip({ ...S.params, ...(anyway ? { export_anyway: true } : {}) }, file);
     res.replaceChildren();
-    if (j.blocked || !j.href) {
+    if (j.message) {
+      res.append(el("span", { class: "err", text: "Not exported. " + j.message }));
+    } else if (j.blocked || !j.href) {
       const ids = (j.rules || []).filter((x) => x.action === "BLOCK").map((x) => x.id);
       res.append(el("span", { class: "err", text: "Not exported. Blocked by " + (ids.join(", ") || "a rule") + "." }));
     } else {
+      if (j.override) res.append(el("p", { class: "warn-line", text: "Exported anyway over: " + [...new Set(j.override.ids)].join(", ") + "." }));
       const stls = j.stls || [];
       const halves = stls.length > 1;
       for (const f of stls) {
@@ -1016,6 +1036,7 @@ async function useUpload(f) {
   if (!f) return;
   const photo = await looksLikePhoto(f);
   S.upload = await toEngineFile(f);
+  resetOverride();
   S.params.art_scale = 100; S.params.art_shift_x = 0; S.params.art_shift_y = 0;
   S.params.art_style = photo ? "portrait" : "trace";
   S.fitTouched = false;

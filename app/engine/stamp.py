@@ -29,7 +29,7 @@ import numpy as np
 from scipy import ndimage as ndi
 from skimage.morphology import skeletonize
 
-from . import api as apimod, art as artmod, export as ex, relief
+from . import api as apimod, art as artmod, export as ex, relief, override as overmod
 from .params import Params, ParamError
 from .rules import checks as roller_checks
 
@@ -81,6 +81,9 @@ class StampParams:
     n_across: int = 1              # pattern repeats across the face (patterns only)
     art: dict = field(default_factory=dict)
     notes: list = field(default_factory=list)
+    # R86 export anyway. Neither is in to_dict(), so no preview, cache key or echo sees them.
+    export_anyway: bool = False
+    pitch_scale: float = 1.0       # >1 = coarser export mesh; only the export retry sets it
 
     @classmethod
     def from_dict(cls, d):
@@ -116,6 +119,7 @@ class StampParams:
             setattr(sp, k, c)
         sp.rim_on, sp.knob_on = flag("rim_on", True), flag("knob_on", True)
         sp.n_across = int(min(12, max(1, round(num("n_across", 1)))))
+        sp.export_anyway = flag("export_anyway", False)
         sp.art = {k: d[k] for k in ART_KEYS if k in d}
         if sp.art.get("art_style", "trace") not in ("trace", "portrait"):
             raise StampError("R80: Group photos are not supported on the stamp tab. Use a drawing, a logo or a photo of one person.")
@@ -717,7 +721,7 @@ def est_triangles(sp, pitch):
 def mesh_pitch(sp):
     """Export grid: max(0.2, longest side / 450) mm, coarsened until the face has no more triangles than the cap
     (250k round, 300k rectangle), so a 150 mm stamp stays a file a phone and a slicer can open."""
-    p = max(0.2, max(sp.width_mm, sp.height_mm) / 450.0)
+    p = max(0.2, max(sp.width_mm, sp.height_mm) / 450.0) * sp.pitch_scale
     cap = TRI_CAP_ROUND if sp.shape == "round" else TRI_CAP_RECT
     while est_triangles(sp, p) > cap:
         p *= 1.03
@@ -771,7 +775,7 @@ def _preview(params, upload, upload_name):
 
 
 # ---------------------------------------------------------------- export
-def _sheet(sp, checks, files, tris, knob):
+def _sheet(sp, checks, files, tris, knob, over=None, notes=()):
     lines = ["# Stamp sheet", "",
              "Face %s x %s mm, %s. Relief %g mm, draft %g deg, edge round %g mm." % (
                  _mm(sp.width_mm), _mm(sp.height_mm), "round (oval when the sides differ)" if sp.shape == "round" else "square / rectangle",
@@ -795,6 +799,10 @@ def _sheet(sp, checks, files, tris, knob):
               "## Checks", "", "| Rule | Result | Note |", "|---|---|---|"]
     for c in checks:
         lines.append("| %s | %s | %s |" % (c["id"], {"pass": "ok", "warn": "WARN", "block": "BLOCK"}[c["level"]], c["text"].replace("|", "/")))
+    if over:
+        lines += [""] + overmod.sheet_block(over["stops"], over["notes"])
+    elif notes:
+        lines += ["", "## Notes", ""] + ["- " + n for n in notes]
     lines += ["", "## Files", ""] + ["- " + f for f in files] + [""]
     return "\n".join(lines)
 
@@ -807,22 +815,75 @@ def _blocked(sp, checks, name=None):
     return {"zip": b"", "blocked": True, "checks": checks, "filename": name or filename(sp), "files": [], "bytes": 0}
 
 
+def _clamp_size(sp):
+    """R80 with the override: the nearest limit, the only way to build one."""
+    w, h = sp.width_mm, sp.height_mm
+    sp.width_mm = min(SIZE_MAX, max(SIZE_MIN, w))
+    sp.height_mm = min(SIZE_MAX, max(SIZE_MIN, h))
+    return "R80: The face was %s x %s mm, outside the %g to %g mm limit. It was built at the nearest limit, %s x %s mm." % (
+        _mm(w), _mm(h), SIZE_MIN, SIZE_MAX, _mm(sp.width_mm), _mm(sp.height_mm))
+
+
+def _repair_part(name, V, F, c):
+    """R86: one cheap repair pass on a part that failed check_mesh. -> (V, F, check, note)."""
+    V2, F2, info = overmod.repair_mesh(V, F)
+    note = "%s: %s" % (name, overmod.repair_note(info))
+    if info["kept"] != "repaired":
+        return V, F, c, note
+    F2 = np.asarray(F2).astype(np.int32)
+    if mesh_volume(V2, F2) < 0:
+        F2 = F2[:, ::-1].copy()
+    return V2, F2, check_mesh(V2, F2), note
+
+
 def export_bytes(params, upload=None, upload_name=None, _checks_only=False):
     """-> {zip, blocked, checks, filename, files, bytes, triangles, seconds}. A blocked export returns no files.
     Anything that goes wrong comes back as a blocked export with a plain sentence, never as an exception.
-    _checks_only stops after R80-R84 (the part the preview shares), for tests."""
-    t0 = time.time()
+    _checks_only stops after R80-R84 (the part the preview shares), for tests.
+    With export_anyway (R86) the zip is written whatever R80-R85 say (R80 size is clamped to the nearest limit); a picture
+    that cannot be read stays a plain message, and an unexpected error is tried once more on a coarser mesh."""
     try:
         sp = StampParams.from_dict(params)
     except StampError as exc:
         return {"zip": b"", "blocked": True, "checks": [{"id": "R80", "level": "block", "text": str(exc)}], "filename": "stamp.zip", "files": [], "bytes": 0}
+    if not sp.export_anyway:
+        return _export(sp, upload, upload_name, _checks_only, None)
+    import dataclasses
+    stops, notes = [], []
+    bad = size_check(sp)
+    if bad:
+        stops.append(bad)
+        notes.append(_clamp_size(sp))
+    over = {"stops": stops, "notes": notes}
+    try:
+        return _export(sp, upload, upload_name, _checks_only, over)
+    except StampError as exc:
+        return _blocked(sp, [{"id": "R80", "level": "block", "text": str(exc)}])
+    except Exception:
+        pass
+    sp2 = dataclasses.replace(sp, pitch_scale=1.5)
+    over2 = {"stops": list(stops), "notes": notes + ["R86: the first build failed, so this one was made on a coarser mesh (1.5 x the usual pitch)."]}
+    try:
+        return _export(sp2, upload, upload_name, _checks_only, over2)
+    except StampError as exc:
+        return _blocked(sp, [{"id": "R80", "level": "block", "text": str(exc)}])
+    except Exception as exc:
+        import sys
+        print("stamp export error: %r" % (exc,), file=sys.stderr)
+        return _blocked(sp, [{"id": "R80", "level": "block", "text": "R86: Export anyway could not build this stamp, even on a coarser mesh. " + FRIENDLY}])
+
+
+def _export(sp, upload, upload_name, _checks_only, over):
+    t0 = time.time()
+    override = over is not None
+    loose_notes = []
     bad = size_check(sp)
     if bad:
         return _blocked(sp, [bad])
     try:
         r = measure(sp, upload, upload_name)
         checks = list(r["checks"])
-        if any(c["level"] == "block" for c in checks):
+        if any(c["level"] == "block" for c in checks) and not override:
             return _blocked(sp, checks)
         if _checks_only:
             return {"zip": b"", "blocked": False, "checks": checks, "filename": filename(sp), "files": [], "bytes": 0}
@@ -844,33 +905,71 @@ def export_bytes(params, upload=None, upload_name=None, _checks_only=False):
             parts.append(("knob", kV, kF, check_mesh(kV, kF)))
             knob = (pad, grip)
         failed = [(n, c) for n, _v, _f, c in parts if not c["ok"]]
-        if failed:
+        if failed and not override:
             for n, c in failed:
                 checks.append({"id": "R85", "level": "block", "text": mesh_check_text(n, c)})
             return _blocked(sp, checks)
-        checks.append({"id": "R85", "level": "pass", "text": "R85: " + "; ".join("%s mesh is watertight, every edge shared by two faces, volume %.1f cm3" % (n, c["volume"] / 1000.0) for n, _v, _f, c in parts) + "."})
-        files = {"stamp.stl": stl_bytes(V, F)}
+        if failed:
+            # R86: cheap repair first, then export whatever came out
+            fixed = []
+            for n, v_, f_, c in parts:
+                if not c["ok"]:
+                    v_, f_, c, note = _repair_part(n, v_, f_, c)
+                    over["notes"].append(note)
+                fixed.append((n, v_, f_, c))
+            parts = fixed
+            V, F = parts[0][1], parts[0][2]
+            for n, _v, _f, c in parts:
+                if not c["ok"]:
+                    checks.append({"id": "R85", "level": "block", "text": mesh_check_text(n, c)})
+            if all(c["ok"] for _n, _v, _f, c in parts):
+                checks.append({"id": "R85", "level": "pass", "text": "R85: " + "; ".join("%s mesh is watertight, every edge shared by two faces, volume %.1f cm3 (after the repair)" % (n, c["volume"] / 1000.0) for n, _v, _f, c in parts) + "."})
+        else:
+            checks.append({"id": "R85", "level": "pass", "text": "R85: " + "; ".join("%s mesh is watertight, every edge shared by two faces, volume %.1f cm3" % (n, c["volume"] / 1000.0) for n, _v, _f, c in parts) + "."})
+        stl_name, knob_name, mf_name = "stamp.stl", "knob.stl", "stamp.3mf"
+        stops_now = [c for c in checks if c["level"] == "block"]
+        if override:
+            # the stop items as the person saw them (size first), then any that appeared at export (R85)
+            seen = [x["text"] for x in over["stops"]]
+            for c in stops_now:
+                if c["text"] not in seen:
+                    over["stops"].append(c)
+                    seen.append(c["text"])
+            over["ids"] = [c["id"] for c in over["stops"]]
+            over["stops"] = [c["text"] if isinstance(c, dict) else c for c in over["stops"]]
+            if over["stops"]:
+                stl_name, knob_name, mf_name = (overmod.mark_name(x) for x in (stl_name, knob_name, mf_name))
+            else:
+                loose_notes = list(over["notes"])
+                over = None
+        files = {stl_name: stl_bytes(V, F)}
         plated = [("stamp", V, F)]
         if knob:
-            files["knob.stl"] = stl_bytes(parts[1][1], parts[1][2])
+            files[knob_name] = stl_bytes(parts[1][1], parts[1][2])
             off = np.array([W + 10.0 + max(knob) / 2.0, H / 2.0, 0.0])      # side by side, 10 mm clear of the widest part
             plated.append(("knob", parts[1][1] + off, parts[1][2]))
-        files["stamp.3mf"] = threemf_bytes(plated)
+        files[mf_name] = threemf_bytes(plated)
         del plated
         files["clay_preview.png"] = clay_png(m["S"], m["inside"], sp.depth, m["pt"], m["pz"], sp.shape == "round")
         names = list(files) + ["sheet.md"]
-        files["sheet.md"] = _sheet(sp, checks, names, len(F), knob).encode("utf-8")
+        files["sheet.md"] = _sheet(sp, checks, names, len(F), knob, over, loose_notes).encode("utf-8")
         bio = io.BytesIO()
         with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED, compresslevel=3) as z:
             for k in list(files):
                 z.writestr(k, files[k])
-        n_tri, stl_len = int(len(F)), len(files["stamp.stl"])
+        n_tri, stl_len = int(len(F)), len(files[stl_name])
         del files, parts, V, F
-        return {"zip": bio.getvalue(), "blocked": False, "checks": checks, "filename": filename(sp), "files": names,
-                "bytes": stl_len, "triangles": n_tri, "seconds": round(time.time() - t0, 2)}
+        out = {"zip": bio.getvalue(), "blocked": False, "checks": checks, "filename": filename(sp), "files": names,
+               "bytes": stl_len, "triangles": n_tri, "seconds": round(time.time() - t0, 2)}
+        if over:
+            out["filename"] = overmod.mark_name(out["filename"])
+            out["override"] = {"ids": over["ids"], "stops": over["stops"], "notes": over["notes"]}
+        return out
     except StampError as exc:
         return _blocked(sp, [{"id": "R80", "level": "block", "text": str(exc)}])
     except Exception as exc:
+        if override:
+            raise
         import sys
         print("stamp export error: %r" % (exc,), file=sys.stderr)
         return _blocked(sp, [{"id": "R80", "level": "block", "text": FRIENDLY}])

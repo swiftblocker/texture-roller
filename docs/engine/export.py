@@ -9,7 +9,8 @@ import numpy as np
 from PIL import Image
 
 from . import art as artmod, api as apimod, derived as derivedmod, rules as rulesmod, mesh as meshmod, relief, layout as layoutmod, body
-from .params import Params
+from . import override as overmod
+from .params import Params, ParamError
 
 STRIP_DEPTHS = (0.8, 1.2, 1.6, 2.0, 2.5)
 
@@ -76,7 +77,7 @@ def slab_preview(P, K):
 
 
 # ------------------------------------------------------------------ sheet
-def sheet_md(P, dv, rules, can, F, files, notes=()):
+def sheet_md(P, dv, rules, can, F, files, notes=(), over=None):
     d = P.depth
     lh = derivedmod.layer_height(P)
     lines = [f"# Roller sheet", "",
@@ -104,7 +105,9 @@ def sheet_md(P, dv, rules, can, F, files, notes=()):
     for r in rules:
         st = "INFO" if r["action"] == "INFO" else ("ok" if r["ok"] else r["action"])
         lines.append(f"| {r['id']} | {st} | {r['msg'].replace('|', '/')} |")
-    lines += ["", "Export " + ("allowed." if can else "BLOCKED. Fix the BLOCK rules above."), ""]
+    lines += ["", "Export " + ("allowed." if can else ("ALLOWED BY THE OWNER over the stop items below (R86)." if over else "BLOCKED. Fix the BLOCK rules above.")), ""]
+    if over:
+        lines += overmod.sheet_block(over["stops"], over.get("notes", ()))
     if notes:
         lines += ["## Notes", ""] + [f"- {n}" for n in notes] + [""]
     lines += ["## Files", ""] + [f"- {f}" for f in files] + [""]
@@ -120,44 +123,93 @@ def _aggregate(vals):
     }
 
 
-def _finish(P, F, dv, rules, can, files, extra_notes, prefix_files, strip=False):
+def _finish(P, F, dv, rules, can, files, extra_notes, prefix_files, strip=False, over=None):
     vis, can2 = rulesmod.summarize(rules)
     sidecar = {"engine": "pottery-roller", "created": time.strftime("%Y-%m-%d %H:%M:%S"),
                "params": apimod.resolved(P, F), "derived": {k: v for k, v in dv.items()},
                "rules_all": rules, "accepted_warnings": [r["id"] for r in rules if r["action"] == "WARN" and not r["ok"]],
                "art_report": F.lay.art_report, "files": list(prefix_files) + ["roller.json", "sheet.md"]}
+    if over:
+        sidecar["exported_anyway"] = {"rule": "R86", "stop_items": over["stops"], "ids": over["ids"], "notes": over.get("notes", [])}
     files["roller.json"] = json.dumps(sidecar, indent=1, default=float).encode("utf-8")
-    files["sheet.md"] = sheet_md(P, dv, rules, can2, F, sidecar["files"], extra_notes).encode("utf-8")
+    files["sheet.md"] = sheet_md(P, dv, rules, can2, F, sidecar["files"], extra_notes, over).encode("utf-8")
     bio = io.BytesIO()
     with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED, compresslevel=3) as z:
         for k, v in files.items():
             z.writestr(k, v)
-    return {"zip": bio.getvalue(), "files": list(files.keys()), "rules": vis, "blocked": not can2, "_files": files}
+    out = {"zip": bio.getvalue(), "files": list(files.keys()), "rules": vis, "blocked": not can2 and not over, "_files": files}
+    if over:
+        out["override"] = {"ids": over["ids"], "stops": over["stops"], "notes": over.get("notes", [])}
+    return out
 
 
-def build_zip(params, upload=None, upload_name=None):
-    P = Params.from_dict(params)
+def _stops(rules):
+    """BLOCK rules that failed, as (id, message)."""
+    return [(r["id"], r["msg"]) for r in rules if r["action"] == "BLOCK" and not r["ok"]]
+
+
+def _revalidate(m, old, expected):
+    """Measure a repaired mesh again. The repair renumbers vertices, so the wall measurement from before is kept."""
+    V, F = m.vertices, m.faces
+    w, c = meshmod.edge_checks(F, len(V))
+    bb = m.bounds
+    dia = max(bb[1][0] - bb[0][0], bb[1][1] - bb[0][1])
+    err = max(abs(dia - expected[0]), abs((bb[1][2] - bb[0][2]) - expected[1]))
+    return dict(old, watertight=w, winding_consistent=c, volume=float(m.volume), bbox_error=float(err),
+                bad_rays=meshmod.radial_ray_check(m, 40), triangles=int(len(F)), vertices=int(len(V)))
+
+
+def _repair_parts(parts, vals):
+    """R86: one cheap repair pass on every part that is not a closed solid, then measure it again."""
+    import trimesh
+    out, nv, notes = [], [], []
+    for (name, m, exp), v in zip(parts, vals):
+        if v["watertight"] and v["winding_consistent"]:
+            out.append((name, m, exp)); nv.append(v)
+            continue
+        V2, F2, info = overmod.repair_mesh(m.vertices, m.faces)
+        notes.append("%s: %s" % (name, overmod.repair_note(info)))
+        if info["kept"] == "repaired":
+            m2 = trimesh.Trimesh(vertices=V2, faces=F2, process=False)
+            m2.metadata.update(m.metadata)
+            out.append((name, m2, exp)); nv.append(_revalidate(m2, v, exp))
+        else:
+            out.append((name, m, exp)); nv.append(v)
+    return out, nv, notes
+
+
+def _mark_files(files):
+    """R86: every STL and 3MF carries -override in its name."""
+    return {(overmod.mark_name(k) if k.lower().endswith((".stl", ".3mf")) else k): v for k, v in files.items()}
+
+
+def _build(P, upload, upload_name, override, extra_notes=()):
     F = apimod.compute(P, upload, upload_name, P.pitch_export)
     dv = derivedmod.derived(P, F)
     rules = rulesmod.evaluate(P, F, dv)
     vis, can = rulesmod.summarize(rules)
-    files, notes = {}, []
-    if can:
+    files, notes = {}, list(extra_notes)
+    repair_notes = []
+    if can or override:
         parts = meshmod.build_parts(P, F.Rm, F.lay)
         vals = [meshmod.validate(m, exp) for _, m, exp in parts]
         val = _aggregate(vals)
         rules = rulesmod.evaluate(P, F, dv, val)
         vis, can = rulesmod.summarize(rules)
+        if override and not can and any(not (v["watertight"] and v["winding_consistent"]) for v in vals):
+            parts, vals, repair_notes = _repair_parts(parts, vals)
+            val = _aggregate(vals)
+            rules = rulesmod.evaluate(P, F, dv, val)
+            vis, can = rulesmod.summarize(rules)
         dv["triangles_actual"] = val["triangles"]
-        if can:
+        if can or override:
             outp = []
             for name, m, exp in parts:
                 V = m.vertices - np.array([0, 0, m.vertices[:, 2].min()])
                 F_ = m.faces.astype(np.int64)
                 files[name + ".stl"] = stl_bytes(V, F_)
                 outp.append((name, V, F_))
-            files["roller_3mf_tmp"] = threemf_bytes(outp)
-            files["roller.3mf" if not P.split else "roller.3mf"] = files.pop("roller_3mf_tmp")
+            files["roller.3mf"] = threemf_bytes(outp)
             step = body.step_bytes(P, F.lay)
             if step is None:
                 notes.append("body.step skipped: STEP needs the desktop install (build123d).")
@@ -168,7 +220,53 @@ def build_zip(params, upload=None, upload_name=None):
             files["heightmap_16bit.png"] = png_bytes(np.clip(np.round(K / P.depth * 65535), 0, 65535).astype(np.uint16), "I;16")
             files["slab_preview.png"] = slab_preview(P, K)
     vis, can = rulesmod.summarize(rules)
-    return _finish(P, F, dv, rules, can, files, notes, [k for k in files])
+    over = None
+    stops = _stops(rules) if (override and files) else []
+    if stops:
+        over = {"stops": [m for _i, m in stops], "ids": [i for i, _m in stops], "notes": repair_notes + list(extra_notes)}
+        files = _mark_files(files)
+    else:
+        notes += repair_notes
+    return _finish(P, F, dv, rules, can, files, notes, list(files), over=over)
+
+
+_PLAIN = "R86: Export anyway cannot fix this. "
+
+
+def _plain_error(exc):
+    """A message that says what to change, never Python text."""
+    t = overmod.ascii_text(str(exc))
+    if isinstance(exc, artmod.ArtError):
+        if "flat colour" in t:
+            return _PLAIN + "The picture is one flat colour, so there is nothing to put on the roller. Use a picture with something drawn on it."
+        if "no file" in t:
+            return _PLAIN + "No picture was uploaded. Upload a picture first."
+        return _PLAIN + "The picture could not be used (%s). Use a PNG, JPEG, WEBP or SVG with something drawn on it." % t
+    return _PLAIN + "A setting is not a usable value (%s). Reset that setting." % t
+
+
+def build_zip(params, upload=None, upload_name=None):
+    P = Params.from_dict(params)
+    if not P.export_anyway:
+        return _build(P, upload, upload_name, False)
+    # R86: a picture that cannot be read stays a plain message. An unexpected engine error is tried once more
+    # on a grid twice as coarse, and only then becomes a plain message.
+    def msg(m):
+        return {"zip": b"", "files": [], "rules": [], "blocked": True, "message": m, "_files": {}}
+    try:
+        return _build(P, upload, upload_name, True)
+    except (artmod.ArtError, ParamError) as exc:
+        return msg(_plain_error(exc))
+    except Exception:
+        pass
+    try:
+        P2 = P.replace(pitch_export=P.pitch_export * 2.0)
+        return _build(P2, upload, upload_name, True,
+                      ["R86: the first build failed, so this one was made on a coarser grid (%g mm instead of %g mm)." % (P2.pitch_export, P.pitch_export)])
+    except (artmod.ArtError, ParamError) as exc:
+        return msg(_plain_error(exc))
+    except Exception:
+        return msg(_PLAIN + "The engine could not build this roller, even on a coarser grid. Try a smaller diameter or length, fewer repeats, or a simpler picture.")
 
 
 # ------------------------------------------------------------------ test strip
@@ -226,4 +324,4 @@ def write_dir(r, out_dir):
         with open(os.path.join(out_dir, k), "wb") as f:
             f.write(v)
         names.append(os.path.join(out_dir, k))
-    return {"files": names, "rules": r["rules"], "blocked": r["blocked"]}
+    return {"files": names, "rules": r["rules"], "blocked": r["blocked"], "override": r.get("override"), "message": r.get("message")}

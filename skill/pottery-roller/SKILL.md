@@ -143,6 +143,7 @@ The stamp tab lays the same art and relief on a flat block with a knob, pressed 
 | R83 | With the border rim off, art that runs into the outline (more than 1 % of the 0.75 mm band inside the edge is raised) is cut off at the edge. | Art cut by the edge reads as a mistake; the rim or a smaller picture fixes it. | derived | low | WARN |
 | R84 | Knob glue pad = min(40, 0.7 x the short side) mm. Under 20 mm the glued joint may pop off under hand pressure. | A small pad is a small glue joint; epoxy, or a thick block held by its edges (no knob), is the fix. | derived | low | WARN |
 | R85 | Both exported meshes (stamp and knob) pass their own check before the zip is built: watertight, every edge shared by exactly two faces with opposite directions (consistent winding), volume > 0, no zero-area triangles. | A slicer fills holes unpredictably; the check is the same proof as R65-R66 on the stamp's own mesh. | derived | low | BLOCK |
+| R86 | Export anyway: the owner may override any stop item; the file is marked -override and lists what was overridden. With the tick the engine writes the files whatever the checks say: a broken mesh gets one cheap repair pass (merge vertices, drop degenerate and duplicate faces, fix normals, fill small holes) and is exported either way; a stamp face outside R80's range is built at the nearest limit and the sheet says so; an unexpected engine error is tried once more on a coarser grid. Never overridden: no picture, a file that is not a picture, a picture of one flat colour, and (cookie) a picture with no outline. The flag never changes a preview. | The owner decides what is worth a print; the engine must not hide the risk, so every STL, 3MF and zip carries -override and the sheet lists each stop word for word. | derived | high | none (owner choice) |
 
 Fixed numbers behind these rules (see `app/out/stamp/brief.md`): block under the relief 6 mm with a knob or 12 mm without; face mirrored left to right (R35 on a flat stamp); 0.6 mm chamfer on the outer top edge; border rim 1.5 to 6 mm at full relief height; mushroom knob 28 mm grip, 30 mm tall, 18 mm grip minimum on faces under 35 mm; relief 0.8 to 3.0 mm; export grid pitch max(0.2, max(W, H) / 450) mm, coarsened so the face stays under 300k triangles (250k round; round blocks halve the spoke count inward so edges stay near one pitch).
 
@@ -157,6 +158,7 @@ Fixed numbers behind these rules (see `app/out/stamp/brief.md`): block under the
 5. Pick the build: R51-R62.
 6. Validate: R65-R73. Any BLOCK stops export.
 7. Stamp tab: R80-R85 (size, lines, contact, edge, knob pad, mesh).
+8. Export anyway: R86, on all three tabs.
 
 ## Known gaps (needing a clay test)
 

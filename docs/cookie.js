@@ -174,13 +174,22 @@ export function initCookie(ctx) {
     $("cookie-count").textContent = nb ? nb + " stop" : nw ? nw + " to look at" : "all clear";
     updateExport();
   }
+  /* R86 export anyway: the box shows while a stop item is showing, clears when the stops are gone, and resets with a new picture. */
+  const overrideOn = () => !!(C.last && !C.last.can_export && $("cookie-override").checked);
+  $("cookie-override").addEventListener("change", () => updateExport());
   function updateExport() {
     const d = C.last;
     const b = $("cookie-export");
-    b.disabled = !d || !d.can_export;
+    const stop = !!(d && !d.can_export);
+    $("cookie-override-wrap").hidden = !stop;
+    if (!stop) $("cookie-override").checked = false;
+    const over = overrideOn();
+    b.disabled = !d || (!d.can_export && !over);
+    b.textContent = over ? "Download anyway" : "Download STL";
     const note = $("cookie-export-note");
-    note.classList.toggle("block", !!(d && !d.can_export));
-    note.textContent = !d ? "" : d.can_export ? "Print with the flat back on the bed, no supports." : "The download is blocked until the stop items above are fixed.";
+    note.classList.toggle("block", !!(d && !d.can_export && !over));
+    note.textContent = !d ? "" : d.can_export ? "Print with the flat back on the bed, no supports."
+      : over ? "Export anyway is ticked. The file will be marked -override." : "The download is blocked until the stop items above are fixed, or you tick Export anyway.";
   }
 
   function renderNote() {
@@ -326,6 +335,7 @@ export function initCookie(ctx) {
     if (!f) return;
     setStatus("Reading the picture...", "busy");
     C.file = await toEngineFile(f);
+    $("cookie-override").checked = false;
     C.last = null;
     syncUpload();
     schedule();
@@ -354,12 +364,14 @@ export function initCookie(ctx) {
     const b = $("cookie-export");
     b.disabled = true;
     try {
-      const j = await engine.cookieExport({ ...C.params }, currentFile());
+      const anyway = overrideOn();
+      const j = await engine.cookieExport({ ...C.params, ...(anyway ? { export_anyway: true } : {}) }, currentFile());
       res.replaceChildren();
       if (j.blocked || !j.href) {
         const why = (j.checks || []).filter((c) => c.level === "block").map((c) => c.text);
         res.append(el("span", { class: "err", text: "Not exported. " + (why.join(" ") || "The model is not printable.") }));
       } else {
+        if (j.override) res.append(el("p", { class: "warn-line", text: "Exported anyway over: " + [...new Set(j.override.ids)].join(", ") + ". The mesh " + (j.watertight ? "came out watertight." : "is NOT watertight.") }));
         const a = dlLink(j.href, j.filename, "Save STL, " + mb(j.bytes), true);
         res.append(a);
         a.click();

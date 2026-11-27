@@ -34,6 +34,9 @@ class CookieParams:
     dough_mm: float = 6.0      # thickness the dough is rolled to
     imprint_mm: float = 2.5    # how deep the inside lines press
     wall_mm: float = 14.0      # height of the cutter, back to cutting edge
+    # R86 export anyway: read by export_bytes only. Neither is in to_dict(), so no preview, cache key or echo sees them.
+    export_anyway: bool = False
+    pitch_scale: float = 1.0   # >1 = coarser working grid; only the export retry sets it
 
     LIMITS = {"size_mm": (30.0, 200.0), "dough_mm": (3.0, 12.0), "imprint_mm": (0.5, 6.0), "wall_mm": (10.0, 30.0)}
 
@@ -63,10 +66,15 @@ class CookieParams:
             notes.append("cutter height raised to %g mm so the lines stand 4 mm off the back" % out["wall_mm"])
         p = cls(**out)
         p.notes = notes
+        v = d.get("export_anyway", False)
+        p.export_anyway = v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on")
         return p
 
     def to_dict(self):
-        return asdict(self)
+        d = asdict(self)
+        d.pop("export_anyway", None)
+        d.pop("pitch_scale", None)
+        return d
 
 
 # fixed design values (red-team fixes); dough/imprint/wall come from CookieParams
@@ -869,13 +877,14 @@ def plain_checks(ck, info, p, notes=()):
     """[{level: pass|warn|block, text}] in words a baker can read. Only a broken mesh or a floating
     piece blocks the download."""
     out = []
-    add = lambda level, text: out.append({"level": level, "text": text})
+    def add(level, text, id=None):
+        out.append({"level": level, "text": text} if id is None else {"level": level, "text": text, "id": id})
     ok_mesh = ck["watertight"] and ck["winding_consistent"]
     add("pass" if ok_mesh else "block",
-        "The model is one closed solid, ready to slice." if ok_mesh else "The model has holes in its surface, so it cannot be printed. Try a simpler picture.")
+        "The model is one closed solid, ready to slice." if ok_mesh else "The model has holes in its surface, so it cannot be printed. Try a simpler picture.", "closed solid")
     one = ck["bodies"] == 1 and ck["back_components"] == 1
     add("pass" if one else "block",
-        "Every inside piece is held by the back bars: nothing floats." if one else "Some inside pieces are not attached to the cutter, so they would fall off.")
+        "Every inside piece is held by the back bars: nothing floats." if one else "Some inside pieces are not attached to the cutter, so they would fall off.", "attached pieces")
     b = ck["bridges"]
     add("pass" if b["ribs_short_of_contacts"] == 0 else "warn",
         "Every inside line is held in at least two places (one for short ones)." if b["ribs_short_of_contacts"] == 0
@@ -906,9 +915,9 @@ def plain_checks(ck, info, p, notes=()):
     ol = info.get("outline")
     if ol:
         if ol["neck_kept"] < 0.90 or ol["neck_pieces"] > 1:
-            add("block", "The cookie has a neck thinner than 6 mm and would break there. Make the shape fuller or the size bigger.")
+            add("block", "The cookie has a neck thinner than 6 mm and would break there. Make the shape fuller or the size bigger.", "thin neck")
         else:
-            add("pass", "No neck thinner than 6 mm: the cookie will not snap when lifted.")
+            add("pass", "No neck thinner than 6 mm: the cookie will not snap when lifted.", "thin neck")
         if ol["ragged"] > 1.35:
             add("warn", "The edge is ragged. Dough will tear on it. A smoother outline cuts cleaner.")
         if ol["fullness"] < 0.55:
@@ -942,7 +951,7 @@ def _frame(polys, px, margin):
 
 def prepare(upload, name, cp: CookieParams):
     from . import art as artmod
-    key = (_hash(upload), round(cp.size_mm, 1))
+    key = (_hash(upload), round(cp.size_mm, 1), cp.pitch_scale)
     if key in _PREP:
         _PREP.move_to_end(key)
         r = dict(_PREP[key]); r["prep_cached"] = True
@@ -971,7 +980,7 @@ def prepare(upload, name, cp: CookieParams):
     p = design(cp)
     polys0, _w, _h = _art_polys(art, cp.size_mm)
     margin = p["wall_back"] + p["rim_w"] + 3.0
-    pitch = _pitch(cp.size_mm)
+    pitch = _pitch(cp.size_mm) * cp.pitch_scale
     t1 = time.time()
     # pass 1 on a coarse grid finds the scale that makes the CUT shape (not the picture frame) size_mm long
     gc = _frame(polys0, max(pitch, 0.2), margin)
@@ -1005,7 +1014,7 @@ def prepare(upload, name, cp: CookieParams):
 def build(upload, name, cp: CookieParams):
     if not upload:
         raise CookieError("no picture to use")
-    key = (_hash(upload), tuple(sorted(cp.to_dict().items())))
+    key = (_hash(upload), tuple(sorted(cp.to_dict().items())), cp.pitch_scale)
     if key in _BUILT:
         _BUILT.move_to_end(key)
         r = dict(_BUILT[key]); r["cached"] = True
@@ -1090,20 +1099,73 @@ def preview(params: dict, upload: bytes | None = None, upload_name: str | None =
     }
 
 
-@_friendly
-def export_bytes(params: dict, upload: bytes | None = None, upload_name: str | None = None) -> dict:
-    """-> {stl: bytes, sidecar: dict, blocked: bool, checks, filename}. Blocked only for a broken mesh or a floating piece."""
-    cp = CookieParams.from_dict(params)
+def _export(cp, upload, upload_name, override, notes=()):
+    from . import override as overmod
     r = build(upload, upload_name, cp)
     checks_ = plain_checks(r["ck"], r["info"], r["p"], getattr(cp, "notes", []))
     blocked = any(c["level"] == "block" for c in checks_)
+    mesh, ck = r["mesh"], r["ck"]
+    over = None
+    loose = list(notes)
+    if override and blocked:
+        stops = [c for c in checks_ if c["level"] == "block"]
+        rep_notes = list(notes)
+        if not (ck["watertight"] and ck["winding_consistent"]):
+            # R86: one cheap repair pass, then check again
+            import trimesh
+            V2, F2, info = overmod.repair_mesh(mesh.vertices, mesh.faces)
+            rep_notes.insert(0, overmod.repair_note(info))
+            if info["kept"] == "repaired":
+                mesh = trimesh.Trimesh(vertices=V2, faces=F2, process=False)
+                ck = dict(ck, watertight=bool(mesh.is_watertight), winding_consistent=bool(mesh.is_winding_consistent),
+                          volume_mm3=round(float(mesh.volume), 1), tris=int(len(mesh.faces)), bodies=_bodies(mesh))
+                checks_ = plain_checks(ck, r["info"], r["p"], getattr(cp, "notes", []))
+                for c in checks_:
+                    if c["level"] == "block" and all(c["text"] != x["text"] for x in stops):
+                        stops.append(c)
+        over = {"ids": [c.get("id") or "stop" for c in stops], "stops": [c["text"] for c in stops], "notes": rep_notes}
+        loose = []
     S = r["S"]
     w = S.bounds[2] - S.bounds[0]
     h = S.bounds[3] - S.bounds[1]
-    stl = b"" if blocked else bytes(r["mesh"].export(file_type="stl"))
+    stl = b"" if (blocked and not over) else bytes(mesh.export(file_type="stl"))
     side = {"kind": "cookie-cutter", "params": cp.to_dict(), "cut_shape_mm": [round(w, 1), round(h, 1)],
             "checks": checks_, "design": {k: r["p"][k] for k in ("wall_tip", "bar_w", "base_t", "maxrun", "land", "pocket", "dot", "rib_w")},
-            "mirrored_for_pressing": True, "triangles": r["ck"]["tris"],
+            "mirrored_for_pressing": True, "triangles": int(len(mesh.faces)),
             "print": "Back plate flat on the bed, 0.2 mm layers, 0.4 mm nozzle, no supports."}
-    return {"stl": stl, "sidecar": side, "blocked": blocked, "checks": checks_,
-            "filename": "cookie-cutter-%dx%d.stl" % (round(w), round(h))}
+    if loose:
+        side["notes"] = loose          # R86: said in the sidecar even when nothing was overridden (for example the coarser retry)
+    name = "cookie-cutter-%dx%d.stl" % (round(w), round(h))
+    out = {"stl": stl, "sidecar": side, "blocked": blocked and not over, "checks": checks_, "filename": name}
+    if over:
+        side["exported_anyway"] = {"rule": "R86", "heading": overmod.HEAD, "stop_items": over["stops"], "ids": over["ids"], "notes": over["notes"],
+                                   "watertight": bool(ck["watertight"])}
+        out["filename"] = overmod.mark_name(name)
+        out["override"] = {"ids": over["ids"], "stops": over["stops"], "notes": over["notes"]}
+        out["watertight"] = bool(ck["watertight"])
+    return out
+
+
+def export_bytes(params: dict, upload: bytes | None = None, upload_name: str | None = None) -> dict:
+    """-> {stl: bytes, sidecar: dict, blocked: bool, checks, filename}. Blocked only for a broken mesh, a floating piece or a
+    thin neck. With export_anyway (R86) the STL is written whatever the checks say; a picture with no outline still raises
+    CookieError, and an unexpected engine error is tried once more on a coarser grid."""
+    cp = CookieParams.from_dict(params)
+    if not cp.export_anyway:
+        return _friendly(_export)(cp, upload, upload_name, False)
+    try:
+        return _export(cp, upload, upload_name, True)
+    except CookieError as exc:
+        raise CookieError("R86: Export anyway cannot fix this. %s" % exc) from exc
+    except Exception:
+        pass
+    import dataclasses
+    cp2 = dataclasses.replace(cp, pitch_scale=1.5)
+    cp2.notes = list(getattr(cp, "notes", []))
+    try:
+        return _export(cp2, upload, upload_name, True,
+                       ["R86: the first build failed, so this one was made on a coarser grid (1.5 x the usual pitch)."])
+    except CookieError as exc:
+        raise CookieError("R86: Export anyway cannot fix this. %s" % exc) from exc
+    except Exception as exc:
+        raise CookieError("R86: Export anyway could not build this cutter, even on a coarser grid. " + FRIENDLY) from exc
